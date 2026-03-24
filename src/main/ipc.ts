@@ -5,6 +5,7 @@ import type {
   ExcelMergeRequest,
   FileDialogFilter,
   GitReportRequest,
+  OpenClawAgentTurnRequest,
   OpenClawConfig,
   OpenClawTaskRequest,
   PptSummaryRequest,
@@ -81,7 +82,11 @@ export function registerIpcHandlers(openClawBridge: OpenClawBridge): void {
     },
     openclaw: {
       getConfig: () => openClawBridge.getConfig(),
+      syncLocalInstall: () => openClawBridge.syncLocalInstall(),
       saveConfig: (config) => openClawBridge.saveConfig(config),
+      listAgents: () => openClawBridge.listAgents(),
+      getStatus: () => openClawBridge.getStatus(),
+      runAgentTurn: (request) => openClawBridge.runAgentTurn(request),
       healthCheck: () => openClawBridge.healthCheck(),
       execute: (request) => openClawBridge.execute(request)
     }
@@ -107,7 +112,13 @@ export function registerIpcHandlers(openClawBridge: OpenClawBridge): void {
   );
   handle('git:generateReport', (_event, request: GitReportRequest) => handlers.git.generateReport(request));
   handle('openclaw:getConfig', () => handlers.openclaw.getConfig());
+  handle('openclaw:syncLocalInstall', () => handlers.openclaw.syncLocalInstall());
   handle('openclaw:saveConfig', (_event, config: OpenClawConfig) => handlers.openclaw.saveConfig(config));
+  handle('openclaw:listAgents', () => handlers.openclaw.listAgents());
+  handle('openclaw:getStatus', () => handlers.openclaw.getStatus());
+  handle('openclaw:runAgentTurn', (_event, request: OpenClawAgentTurnRequest) =>
+    handlers.openclaw.runAgentTurn(request)
+  );
   handle('openclaw:healthCheck', () => handlers.openclaw.healthCheck());
   handle('openclaw:execute', (_event, request: OpenClawTaskRequest) => handlers.openclaw.execute(request));
 }

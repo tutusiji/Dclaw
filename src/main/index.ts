@@ -3,8 +3,10 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { registerIpcHandlers } from './ipc';
 import { OpenClawBridge } from './services/openclaw-bridge';
+import { OpenClawSidecarManager } from './services/openclaw-sidecar';
 
 let mainWindow: BrowserWindow | null = null;
+let sidecarManager: OpenClawSidecarManager | null = null;
 const __dirname = fileURLToPath(new URL('.', import.meta.url));
 
 function createWindow(): void {
@@ -29,8 +31,21 @@ function createWindow(): void {
   }
 }
 
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
   const bridge = new OpenClawBridge(join(app.getPath('userData'), 'openclaw.config.json'));
+  sidecarManager = new OpenClawSidecarManager(app.getPath('userData'));
+
+  await sidecarManager
+    .start()
+    .then((started) => {
+      if (started) {
+        bridge.setRuntimeOverride(sidecarManager!.getBridgeConfigOverride());
+      }
+    })
+    .catch((error) => {
+      console.warn('[dclaw] failed to start bundled OpenClaw sidecar, using fallback integration', error);
+    });
+
   registerIpcHandlers(bridge);
   createWindow();
 
@@ -44,5 +59,11 @@ app.whenReady().then(() => {
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') {
     app.quit();
+  }
+});
+
+app.on('before-quit', () => {
+  if (sidecarManager) {
+    void sidecarManager.stop();
   }
 });

@@ -1,5 +1,6 @@
-export type OpenClawMode = 'http' | 'command';
+export type OpenClawMode = 'cli' | 'http' | 'command';
 export type ReportPreset = 'week' | 'month' | 'custom';
+export type OpenClawThinkingLevel = 'off' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh';
 
 export interface EnvironmentInfo {
   platform: string;
@@ -131,11 +132,55 @@ export interface GitReportResult {
 
 export interface OpenClawConfig {
   mode: OpenClawMode;
+  cliPath?: string;
+  cliEntryPath?: string;
+  cliUseElectronNode?: boolean;
+  profile?: string;
+  configPath?: string;
+  gatewayPort?: number;
+  gatewayUrl?: string;
+  defaultAgentId?: string;
+  workspacePath?: string;
   baseUrl?: string;
   apiKey?: string;
   binaryPath?: string;
   defaultArgs?: string[];
   workingDirectory?: string;
+}
+
+export interface OpenClawAgentSummary {
+  id: string;
+  workspace?: string;
+  agentDir?: string;
+  model?: string;
+  bindings?: number;
+  isDefault?: boolean;
+  routes?: string[];
+}
+
+export interface OpenClawStatusSnapshot {
+  ok: boolean;
+  gatewayStatus?: Record<string, unknown>;
+  runtimeStatus?: Record<string, unknown>;
+  agents: OpenClawAgentSummary[];
+  inferredConfig?: Partial<OpenClawConfig>;
+  error?: string;
+}
+
+export interface OpenClawAgentTurnRequest {
+  message: string;
+  agentId?: string;
+  channel?: string;
+  sessionId?: string;
+  to?: string;
+  deliver?: boolean;
+  local?: boolean;
+  thinking?: OpenClawThinkingLevel;
+  timeoutSeconds?: number;
+  verbose?: 'on' | 'off';
+  replyAccount?: string;
+  replyChannel?: string;
+  replyTo?: string;
 }
 
 export interface OpenClawTaskRequest {
@@ -181,7 +226,11 @@ export interface DclawApi {
   };
   openclaw: {
     getConfig(): Promise<OpenClawConfig>;
+    syncLocalInstall(): Promise<OpenClawConfig>;
     saveConfig(config: OpenClawConfig): Promise<OpenClawConfig>;
+    listAgents(): Promise<OpenClawAgentSummary[]>;
+    getStatus(): Promise<OpenClawStatusSnapshot>;
+    runAgentTurn(request: OpenClawAgentTurnRequest): Promise<OpenClawTaskResponse>;
     healthCheck(): Promise<OpenClawTaskResponse>;
     execute(request: OpenClawTaskRequest): Promise<OpenClawTaskResponse>;
   };

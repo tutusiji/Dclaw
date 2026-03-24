@@ -5,6 +5,7 @@ import type {
   ExcelMergeRequest,
   FileDialogFilter,
   GitReportRequest,
+  OpenClawAgentTurnRequest,
   OpenClawConfig,
   OpenClawTaskRequest,
   PptSummaryRequest,
@@ -39,7 +40,11 @@ const api: DclawApi = {
   },
   openclaw: {
     getConfig: () => ipcRenderer.invoke('openclaw:getConfig'),
+    syncLocalInstall: () => ipcRenderer.invoke('openclaw:syncLocalInstall'),
     saveConfig: (config: OpenClawConfig) => ipcRenderer.invoke('openclaw:saveConfig', config),
+    listAgents: () => ipcRenderer.invoke('openclaw:listAgents'),
+    getStatus: () => ipcRenderer.invoke('openclaw:getStatus'),
+    runAgentTurn: (request: OpenClawAgentTurnRequest) => ipcRenderer.invoke('openclaw:runAgentTurn', request),
     healthCheck: () => ipcRenderer.invoke('openclaw:healthCheck'),
     execute: (request: OpenClawTaskRequest) => ipcRenderer.invoke('openclaw:execute', request)
   }

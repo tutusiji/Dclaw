@@ -9,8 +9,9 @@
     "dev": "electron-vite dev",
     "build": "electron-vite build",
     "preview": "electron-vite preview",
+    "stage:openclaw-runtime": "node scripts/stage-openclaw-runtime.mjs",
     "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.node.json",
-    "package": "npm run build && electron-builder"
+    "package": "pnpm stage:openclaw-runtime && npm run build && electron-builder"
   },
   "dependencies": {
     "react": "^18.3.1",
@@ -42,6 +43,15 @@
       "dist/**/*",
       "dist-electron/**/*",
       "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "vendor/openclaw-runtime",
+        "to": "openclaw-runtime",
+        "filter": [
+          "**/*"
+        ]
+      }
     ]
   }
 }

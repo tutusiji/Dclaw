@@ -4,13 +4,17 @@ import type {
   GitReportResult,
   GitRepository,
   OfficeCapabilityMatrix,
-  OpenClawConfig
+  OpenClawAgentSummary,
+  OpenClawConfig,
+  OpenClawThinkingLevel
 } from '@shared/types';
 import { Panel } from './components/Panel';
+import { buildOpenClawReportPrompt, extractOpenClawReportText, getAiTemplateLabel, type AiReportTemplate } from './reporting';
 
 const DEFAULT_OPENCLAW_CONFIG: OpenClawConfig = {
-  mode: 'http',
-  baseUrl: 'http://127.0.0.1:6917'
+  mode: 'cli',
+  cliPath: 'openclaw',
+  defaultAgentId: 'main'
 };
 
 function splitLines(value: string): string[] {
@@ -46,11 +50,21 @@ export function App() {
   const [activity, setActivity] = useState('Bootstrapping Dclaw workspace.');
 
   const [openClawConfig, setOpenClawConfig] = useState<OpenClawConfig>(DEFAULT_OPENCLAW_CONFIG);
+  const [openClawAgents, setOpenClawAgents] = useState<OpenClawAgentSummary[]>([]);
+  const [openClawAgentId, setOpenClawAgentId] = useState('main');
+  const [openClawSessionId, setOpenClawSessionId] = useState('');
+  const [openClawRecipient, setOpenClawRecipient] = useState('');
+  const [openClawChannel, setOpenClawChannel] = useState('');
+  const [openClawThinking, setOpenClawThinking] = useState<OpenClawThinkingLevel>('medium');
+  const [openClawTimeoutSeconds, setOpenClawTimeoutSeconds] = useState('180');
+  const [openClawMessage, setOpenClawMessage] = useState('Summarize the current workspace status for this week.');
+  const [openClawLocal, setOpenClawLocal] = useState(false);
+  const [openClawDeliver, setOpenClawDeliver] = useState(false);
   const [defaultArgsText, setDefaultArgsText] = useState('');
   const [openClawRequestPath, setOpenClawRequestPath] = useState('/api/tasks');
   const [openClawMethod, setOpenClawMethod] = useState<'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE'>('POST');
   const [openClawPayload, setOpenClawPayload] = useState('{\n  "prompt": "Summarize the current sprint status."\n}');
-  const [openClawArgsText, setOpenClawArgsText] = useState('');
+  const [openClawArgsText, setOpenClawArgsText] = useState('gateway status --json');
   const [openClawResult, setOpenClawResult] = useState('');
 
   const [directoryPath, setDirectoryPath] = useState('');
@@ -94,6 +108,10 @@ export function App() {
   const [gitReportPath, setGitReportPath] = useState('');
   const [gitRepositories, setGitRepositories] = useState<GitRepository[]>([]);
   const [gitReport, setGitReport] = useState<GitReportResult | null>(null);
+  const [gitAiTemplate, setGitAiTemplate] = useState<AiReportTemplate>('auto_cn');
+  const [gitAiContext, setGitAiContext] = useState('');
+  const [gitAiOutputPath, setGitAiOutputPath] = useState('');
+  const [gitAiMarkdown, setGitAiMarkdown] = useState('');
 
   useEffect(() => {
     void bootstrap();
@@ -125,6 +143,7 @@ export function App() {
       setEnvironment(env);
       setCapabilities(office);
       setOpenClawConfig(config);
+      setOpenClawAgentId(config.defaultAgentId ?? 'main');
       setDefaultArgsText((config.defaultArgs ?? []).join('\n'));
     });
   }
@@ -164,13 +183,67 @@ export function App() {
         defaultArgs: splitLines(defaultArgsText)
       });
       setOpenClawConfig(saved);
+      setOpenClawAgentId(saved.defaultAgentId ?? openClawAgentId);
       setDefaultArgsText((saved.defaultArgs ?? []).join('\n'));
+    });
+  }
+
+  async function syncOpenClawInstall() {
+    await runTask('Syncing local OpenClaw install', async () => {
+      const synced = await window.dclaw.openclaw.syncLocalInstall();
+      setOpenClawConfig(synced);
+      setOpenClawAgentId(synced.defaultAgentId ?? 'main');
+      setDefaultArgsText((synced.defaultArgs ?? []).join('\n'));
     });
   }
 
   async function checkOpenClawHealth() {
     await runTask('Running OpenClaw health check', async () => {
       const result = await window.dclaw.openclaw.healthCheck();
+      setOpenClawResult(formatJson(result));
+    });
+  }
+
+  async function inspectOpenClawStatus() {
+    await runTask('Inspecting OpenClaw gateway', async () => {
+      const snapshot = await window.dclaw.openclaw.getStatus();
+      setOpenClawResult(formatJson(snapshot));
+      setOpenClawAgents(snapshot.agents);
+      if (snapshot.inferredConfig) {
+        setOpenClawConfig((current) => ({
+          ...current,
+          ...snapshot.inferredConfig,
+          mode: 'cli'
+        }));
+        if (snapshot.inferredConfig.defaultAgentId) {
+          setOpenClawAgentId(snapshot.inferredConfig.defaultAgentId);
+        }
+      }
+    });
+  }
+
+  async function loadOpenClawAgents() {
+    await runTask('Loading OpenClaw agents', async () => {
+      const agents = await window.dclaw.openclaw.listAgents();
+      setOpenClawAgents(agents);
+      const defaultAgent = agents.find((agent) => agent.isDefault)?.id ?? openClawConfig.defaultAgentId ?? 'main';
+      setOpenClawAgentId((current) => current || defaultAgent);
+    });
+  }
+
+  async function runOpenClawAgent() {
+    await runTask('Running OpenClaw agent turn', async () => {
+      const result = await window.dclaw.openclaw.runAgentTurn({
+        message: openClawMessage,
+        agentId: openClawAgentId || undefined,
+        sessionId: openClawSessionId || undefined,
+        to: openClawRecipient || undefined,
+        channel: openClawChannel || undefined,
+        deliver: openClawDeliver,
+        local: openClawLocal,
+        thinking: openClawThinking,
+        timeoutSeconds: Number(openClawTimeoutSeconds) || 180
+      });
       setOpenClawResult(formatJson(result));
     });
   }
@@ -257,6 +330,18 @@ export function App() {
     });
   }
 
+  function buildGitReportRequest() {
+    return {
+      sourceMode: gitSourceMode,
+      sourcePath: gitSourcePath,
+      preset: gitPreset,
+      startDate: gitPreset === 'custom' ? gitStartDate : undefined,
+      endDate: gitPreset === 'custom' ? gitEndDate : undefined,
+      author: gitAuthor || undefined,
+      depth: gitSourceMode === 'workspace' ? Number(gitDepth) || 3 : undefined
+    } as const;
+  }
+
   async function findGitRepositories() {
     await runTask('Scanning git repositories', async () => {
       const repositories = await window.dclaw.git.listRepositories(gitSourcePath, Number(gitDepth) || 3);
@@ -266,16 +351,9 @@ export function App() {
 
   async function generateGitReport() {
     await runTask('Generating git report', async () => {
-      const report = await window.dclaw.git.generateReport({
-        sourceMode: gitSourceMode,
-        sourcePath: gitSourcePath,
-        preset: gitPreset,
-        startDate: gitPreset === 'custom' ? gitStartDate : undefined,
-        endDate: gitPreset === 'custom' ? gitEndDate : undefined,
-        author: gitAuthor || undefined,
-        depth: gitSourceMode === 'workspace' ? Number(gitDepth) || 3 : undefined
-      });
+      const report = await window.dclaw.git.generateReport(buildGitReportRequest());
       setGitReport(report);
+      setGitRepositories(report.repositories.map((section) => section.repository));
     });
   }
 
@@ -292,10 +370,58 @@ export function App() {
     });
   }
 
+  async function generateOpenClawGitReport() {
+    await runTask('Generating Chinese report with OpenClaw', async () => {
+      const baseReport = await window.dclaw.git.generateReport(buildGitReportRequest());
+      setGitReport(baseReport);
+      setGitRepositories(baseReport.repositories.map((section) => section.repository));
+
+      const prompt = buildOpenClawReportPrompt({
+        report: baseReport,
+        template: gitAiTemplate,
+        sourcePath: gitSourcePath,
+        sourceMode: gitSourceMode,
+        extraContext: gitAiContext,
+        today: new Date().toISOString().slice(0, 10)
+      });
+
+      const result = await window.dclaw.openclaw.runAgentTurn({
+        message: prompt,
+        agentId: openClawAgentId || openClawConfig.defaultAgentId || 'main',
+        thinking: openClawThinking,
+        timeoutSeconds: Number(openClawTimeoutSeconds) || 180,
+        local: openClawLocal
+      });
+
+      setOpenClawResult(formatJson(result));
+      if (!result.ok) {
+        throw new Error(result.error ?? 'OpenClaw failed to generate the AI report.');
+      }
+
+      const aiMarkdown = extractOpenClawReportText(result.output ?? result.stdout ?? result);
+      setGitAiMarkdown(aiMarkdown);
+    });
+  }
+
+  async function saveOpenClawGitReport() {
+    if (!gitAiMarkdown || !gitAiOutputPath) {
+      return;
+    }
+
+    await runTask('Saving OpenClaw report', async () => {
+      await window.dclaw.files.writeText({
+        path: gitAiOutputPath,
+        content: gitAiMarkdown
+      });
+    });
+  }
+
   const openClawModeHint =
-    openClawConfig.mode === 'http'
-      ? 'Use HTTP mode when OpenClaw exposes a local API.'
-      : 'Use command mode when OpenClaw is launched through a local binary or wrapper script.';
+    openClawConfig.mode === 'cli'
+      ? 'Use CLI mode to bind directly to the installed OpenClaw gateway, agents, and local config.'
+      : openClawConfig.mode === 'http'
+        ? 'Use HTTP mode when OpenClaw exposes a local API.'
+        : 'Use command mode when OpenClaw is launched through a local binary or wrapper script.';
 
   return (
     <div className="app-shell">
@@ -333,20 +459,21 @@ export function App() {
         <Panel
           eyebrow="Bridge"
           title="OpenClaw Adapter"
-          subtitle="Persist local OpenClaw connection settings, then call it through HTTP or a local command wrapper."
+          subtitle="Bind Dclaw to the real OpenClaw CLI, gateway, agents, or fall back to HTTP and wrapper commands."
         >
           <div className="subgrid two-up">
             <label className="field">
               <span>Mode</span>
               <select
                 value={openClawConfig.mode}
-                  onChange={(event) =>
-                    setOpenClawConfig({
-                      ...openClawConfig,
-                      mode: event.target.value as OpenClawConfig['mode']
-                    })
-                  }
+                onChange={(event) =>
+                  setOpenClawConfig({
+                    ...openClawConfig,
+                    mode: event.target.value as OpenClawConfig['mode']
+                  })
+                }
               >
+                <option value="cli">OpenClaw CLI</option>
                 <option value="http">HTTP</option>
                 <option value="command">Command</option>
               </select>
@@ -357,7 +484,110 @@ export function App() {
             </div>
           </div>
 
-          {openClawConfig.mode === 'http' ? (
+          {openClawConfig.mode === 'cli' ? (
+            <>
+              <div className="subgrid two-up">
+                <label className="field">
+                  <span>CLI path</span>
+                  <input
+                    value={openClawConfig.cliPath ?? ''}
+                    onChange={(event) =>
+                      setOpenClawConfig({
+                        ...openClawConfig,
+                        cliPath: event.target.value
+                      })
+                    }
+                    placeholder="openclaw"
+                  />
+                </label>
+                <label className="field">
+                  <span>Profile</span>
+                  <input
+                    value={openClawConfig.profile ?? ''}
+                    onChange={(event) =>
+                      setOpenClawConfig({
+                        ...openClawConfig,
+                        profile: event.target.value
+                      })
+                    }
+                    placeholder="Optional named OpenClaw profile"
+                  />
+                </label>
+              </div>
+
+              <div className="subgrid three-up">
+                <label className="field">
+                  <span>Gateway port</span>
+                  <input
+                    value={openClawConfig.gatewayPort?.toString() ?? ''}
+                    onChange={(event) =>
+                      setOpenClawConfig({
+                        ...openClawConfig,
+                        gatewayPort: event.target.value ? Number(event.target.value) : undefined
+                      })
+                    }
+                    placeholder="6917"
+                  />
+                </label>
+                <label className="field">
+                  <span>Default agent</span>
+                  <input
+                    value={openClawConfig.defaultAgentId ?? ''}
+                    onChange={(event) =>
+                      setOpenClawConfig({
+                        ...openClawConfig,
+                        defaultAgentId: event.target.value
+                      })
+                    }
+                    placeholder="main"
+                  />
+                </label>
+                <label className="field">
+                  <span>Workspace path</span>
+                  <input
+                    value={openClawConfig.workspacePath ?? ''}
+                    onChange={(event) =>
+                      setOpenClawConfig({
+                        ...openClawConfig,
+                        workspacePath: event.target.value,
+                        workingDirectory: event.target.value
+                      })
+                    }
+                    placeholder="/root/.openclaw/workspace"
+                  />
+                </label>
+              </div>
+
+              <div className="subgrid two-up">
+                <label className="field">
+                  <span>Config path</span>
+                  <input
+                    value={openClawConfig.configPath ?? ''}
+                    onChange={(event) =>
+                      setOpenClawConfig({
+                        ...openClawConfig,
+                        configPath: event.target.value
+                      })
+                    }
+                    placeholder="~/.openclaw/openclaw.json"
+                  />
+                </label>
+                <label className="field">
+                  <span>Gateway URL</span>
+                  <input
+                    value={openClawConfig.gatewayUrl ?? ''}
+                    onChange={(event) =>
+                      setOpenClawConfig({
+                        ...openClawConfig,
+                        gatewayUrl: event.target.value
+                      })
+                    }
+                    placeholder="ws://127.0.0.1:6917"
+                  />
+                </label>
+              </div>
+            </>
+          ) : openClawConfig.mode === 'http' ? (
             <div className="subgrid two-up">
               <label className="field">
                 <span>Base URL</span>
@@ -429,6 +659,13 @@ export function App() {
 
           <div className="button-row">
             <button
+              className="button button--ghost"
+              onClick={() => void syncOpenClawInstall()}
+              disabled={Boolean(busy) || openClawConfig.mode !== 'cli'}
+            >
+              Sync local install
+            </button>
+            <button
               className="button"
               onClick={() => void saveOpenClawConfig()}
               disabled={Boolean(busy)}
@@ -442,59 +679,221 @@ export function App() {
             >
               Health check
             </button>
-          </div>
-
-          <div className="subgrid two-up">
-            <label className="field">
-              <span>Request path</span>
-              <input
-                value={openClawRequestPath}
-                onChange={(event) => setOpenClawRequestPath(event.target.value)}
-                placeholder="/api/tasks"
-              />
-            </label>
-            <label className="field">
-              <span>Method</span>
-              <select
-                value={openClawMethod}
-                onChange={(event) => setOpenClawMethod(event.target.value as typeof openClawMethod)}
-              >
-                <option value="GET">GET</option>
-                <option value="POST">POST</option>
-                <option value="PUT">PUT</option>
-                <option value="PATCH">PATCH</option>
-                <option value="DELETE">DELETE</option>
-              </select>
-            </label>
-          </div>
-
-          <label className="field">
-            <span>Request payload</span>
-            <textarea
-              value={openClawPayload}
-              onChange={(event) => setOpenClawPayload(event.target.value)}
-              rows={7}
-            />
-          </label>
-
-          <label className="field">
-            <span>Command args</span>
-            <input
-              value={openClawArgsText}
-              onChange={(event) => setOpenClawArgsText(event.target.value)}
-              placeholder="Used in command mode only"
-            />
-          </label>
-
-          <div className="button-row">
             <button
-              className="button"
-              onClick={() => void executeOpenClawTask()}
-              disabled={Boolean(busy)}
+              className="button button--ghost"
+              onClick={() => void inspectOpenClawStatus()}
+              disabled={Boolean(busy) || openClawConfig.mode !== 'cli'}
             >
-              Execute
+              Gateway status
+            </button>
+            <button
+              className="button button--ghost"
+              onClick={() => void loadOpenClawAgents()}
+              disabled={Boolean(busy) || openClawConfig.mode !== 'cli'}
+            >
+              Load agents
             </button>
           </div>
+
+          {openClawConfig.mode === 'cli' ? (
+            <>
+              <div className="card">
+                <div className="card-header">
+                  <h3>Agent turn</h3>
+                  <span className="muted">
+                    Uses `openclaw agent --json` with gateway port override when needed.
+                  </span>
+                </div>
+                <div className="subgrid three-up">
+                  <label className="field">
+                    <span>Agent</span>
+                    <input
+                      list="openclaw-agents"
+                      value={openClawAgentId}
+                      onChange={(event) => setOpenClawAgentId(event.target.value)}
+                      placeholder="main"
+                    />
+                    <datalist id="openclaw-agents">
+                      {openClawAgents.map((agent) => (
+                        <option
+                          key={agent.id}
+                          value={agent.id}
+                        />
+                      ))}
+                    </datalist>
+                  </label>
+                  <label className="field">
+                    <span>Session ID</span>
+                    <input
+                      value={openClawSessionId}
+                      onChange={(event) => setOpenClawSessionId(event.target.value)}
+                      placeholder="Optional existing session id"
+                    />
+                  </label>
+                  <label className="field">
+                    <span>Thinking</span>
+                    <select
+                      value={openClawThinking}
+                      onChange={(event) => setOpenClawThinking(event.target.value as OpenClawThinkingLevel)}
+                    >
+                      <option value="off">off</option>
+                      <option value="minimal">minimal</option>
+                      <option value="low">low</option>
+                      <option value="medium">medium</option>
+                      <option value="high">high</option>
+                      <option value="xhigh">xhigh</option>
+                    </select>
+                  </label>
+                </div>
+
+                <div className="subgrid three-up">
+                  <label className="field">
+                    <span>Recipient</span>
+                    <input
+                      value={openClawRecipient}
+                      onChange={(event) => setOpenClawRecipient(event.target.value)}
+                      placeholder="Optional --to target"
+                    />
+                  </label>
+                  <label className="field">
+                    <span>Channel</span>
+                    <input
+                      value={openClawChannel}
+                      onChange={(event) => setOpenClawChannel(event.target.value)}
+                      placeholder="Optional routing channel"
+                    />
+                  </label>
+                  <label className="field">
+                    <span>Timeout seconds</span>
+                    <input
+                      value={openClawTimeoutSeconds}
+                      onChange={(event) => setOpenClawTimeoutSeconds(event.target.value)}
+                      placeholder="180"
+                    />
+                  </label>
+                </div>
+
+                <div className="pill-row">
+                  <button
+                    type="button"
+                    className={`pill ${openClawLocal ? 'pill--ok' : 'pill--off'}`}
+                    onClick={() => setOpenClawLocal((current) => !current)}
+                  >
+                    local {openClawLocal ? 'on' : 'off'}
+                  </button>
+                  <button
+                    type="button"
+                    className={`pill ${openClawDeliver ? 'pill--ok' : 'pill--off'}`}
+                    onClick={() => setOpenClawDeliver((current) => !current)}
+                  >
+                    deliver {openClawDeliver ? 'on' : 'off'}
+                  </button>
+                </div>
+
+                <label className="field">
+                  <span>Message</span>
+                  <textarea
+                    value={openClawMessage}
+                    onChange={(event) => setOpenClawMessage(event.target.value)}
+                    rows={6}
+                  />
+                </label>
+
+                <div className="button-row">
+                  <button
+                    className="button"
+                    onClick={() => void runOpenClawAgent()}
+                    disabled={Boolean(busy)}
+                  >
+                    Run agent
+                  </button>
+                </div>
+              </div>
+
+              <div className="subsection">
+                <h4>Advanced raw CLI</h4>
+                <label className="field">
+                  <span>CLI args</span>
+                  <input
+                    value={openClawArgsText}
+                    onChange={(event) => setOpenClawArgsText(event.target.value)}
+                    placeholder="gateway status --json"
+                  />
+                </label>
+                <label className="field">
+                  <span>Payload env</span>
+                  <textarea
+                    value={openClawPayload}
+                    onChange={(event) => setOpenClawPayload(event.target.value)}
+                    rows={5}
+                  />
+                </label>
+                <div className="button-row">
+                  <button
+                    className="button button--ghost"
+                    onClick={() => void executeOpenClawTask()}
+                    disabled={Boolean(busy)}
+                  >
+                    Execute raw CLI
+                  </button>
+                </div>
+              </div>
+            </>
+          ) : (
+            <>
+              <div className="subgrid two-up">
+                <label className="field">
+                  <span>Request path</span>
+                  <input
+                    value={openClawRequestPath}
+                    onChange={(event) => setOpenClawRequestPath(event.target.value)}
+                    placeholder="/api/tasks"
+                  />
+                </label>
+                <label className="field">
+                  <span>Method</span>
+                  <select
+                    value={openClawMethod}
+                    onChange={(event) => setOpenClawMethod(event.target.value as typeof openClawMethod)}
+                  >
+                    <option value="GET">GET</option>
+                    <option value="POST">POST</option>
+                    <option value="PUT">PUT</option>
+                    <option value="PATCH">PATCH</option>
+                    <option value="DELETE">DELETE</option>
+                  </select>
+                </label>
+              </div>
+
+              <label className="field">
+                <span>Request payload</span>
+                <textarea
+                  value={openClawPayload}
+                  onChange={(event) => setOpenClawPayload(event.target.value)}
+                  rows={7}
+                />
+              </label>
+
+              <label className="field">
+                <span>Command args</span>
+                <input
+                  value={openClawArgsText}
+                  onChange={(event) => setOpenClawArgsText(event.target.value)}
+                  placeholder={openClawConfig.mode === 'http' ? 'Optional request args' : 'Used in command mode only'}
+                />
+              </label>
+
+              <div className="button-row">
+                <button
+                  className="button"
+                  onClick={() => void executeOpenClawTask()}
+                  disabled={Boolean(busy)}
+                >
+                  Execute
+                </button>
+              </div>
+            </>
+          )}
 
           <pre className="result-box">{openClawResult || 'Result output will appear here.'}</pre>
         </Panel>
@@ -939,6 +1338,84 @@ export function App() {
             </button>
           </div>
 
+          <div className="subsection">
+            <h4>OpenClaw 中文报告</h4>
+            <div className="subgrid three-up">
+              <label className="field">
+                <span>Template</span>
+                <select
+                  value={gitAiTemplate}
+                  onChange={(event) => setGitAiTemplate(event.target.value as AiReportTemplate)}
+                >
+                  <option value="auto_cn">Auto by preset</option>
+                  <option value="weekly_cn">中文周报</option>
+                  <option value="monthly_cn">中文月报</option>
+                  <option value="leadership_cn">中文领导摘要</option>
+                </select>
+              </label>
+              <label className="field">
+                <span>OpenClaw agent</span>
+                <input
+                  list="openclaw-agents"
+                  value={openClawAgentId}
+                  onChange={(event) => setOpenClawAgentId(event.target.value)}
+                  placeholder={openClawConfig.defaultAgentId ?? 'main'}
+                />
+              </label>
+              <label className="field">
+                <span>AI output path</span>
+                <div className="inline-field">
+                  <input
+                    value={gitAiOutputPath}
+                    onChange={(event) => setGitAiOutputPath(event.target.value)}
+                    placeholder="Optional markdown path"
+                  />
+                  <button
+                    className="button button--ghost"
+                    onClick={() =>
+                      void pickSavePathInto(setGitAiOutputPath, 'openclaw-report.md', [
+                        { name: 'Markdown', extensions: ['md'] }
+                      ])
+                    }
+                    disabled={Boolean(busy)}
+                  >
+                    Pick
+                  </button>
+                </div>
+              </label>
+            </div>
+
+            <label className="field">
+              <span>Business context</span>
+              <textarea
+                value={gitAiContext}
+                onChange={(event) => setGitAiContext(event.target.value)}
+                rows={4}
+                placeholder="Optional context, project goals, audience, or reporting constraints."
+              />
+            </label>
+
+            <div className="button-row">
+              <button
+                className="button"
+                onClick={() => void generateOpenClawGitReport()}
+                disabled={Boolean(busy)}
+              >
+                Generate with OpenClaw
+              </button>
+              <button
+                className="button button--ghost"
+                onClick={() => void saveOpenClawGitReport()}
+                disabled={Boolean(busy) || !gitAiMarkdown || !gitAiOutputPath}
+              >
+                Save AI report
+              </button>
+            </div>
+            <p className="muted">
+              Current template: {gitReport ? getAiTemplateLabel(gitAiTemplate, gitReport) : 'Will resolve after base report generation'}.
+            </p>
+          </div>
+
           <div className="list-box">
             {gitRepositories.length === 0 ? (
               <span className="muted">No repositories scanned yet.</span>
@@ -952,6 +1429,7 @@ export function App() {
           </div>
 
           <pre className="result-box">{gitReport?.markdown ?? 'Generated markdown report will appear here.'}</pre>
+          <pre className="result-box">{gitAiMarkdown || 'OpenClaw-generated Chinese report will appear here.'}</pre>
         </Panel>
       </main>
 
