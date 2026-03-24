@@ -1,0 +1,48 @@
+import { contextBridge, ipcRenderer } from 'electron';
+import type {
+  CsvMergeRequest,
+  DclawApi,
+  ExcelMergeRequest,
+  FileDialogFilter,
+  GitReportRequest,
+  OpenClawConfig,
+  OpenClawTaskRequest,
+  PptSummaryRequest,
+  TextMergeRequest,
+  WordSummaryRequest
+} from '../shared/types';
+
+const api: DclawApi = {
+  app: {
+    getEnvironment: () => ipcRenderer.invoke('app:getEnvironment'),
+    pickFiles: (filters?: FileDialogFilter[]) => ipcRenderer.invoke('app:pickFiles', filters),
+    pickDirectory: () => ipcRenderer.invoke('app:pickDirectory'),
+    pickSavePath: (defaultPath?: string, filters?: FileDialogFilter[]) =>
+      ipcRenderer.invoke('app:pickSavePath', defaultPath, filters)
+  },
+  files: {
+    listDirectory: (path) => ipcRenderer.invoke('files:listDirectory', path),
+    readText: (path) => ipcRenderer.invoke('files:readText', path),
+    writeText: (request) => ipcRenderer.invoke('files:writeText', request),
+    mergeText: (request: TextMergeRequest) => ipcRenderer.invoke('files:mergeText', request),
+    mergeCsv: (request: CsvMergeRequest) => ipcRenderer.invoke('files:mergeCsv', request)
+  },
+  office: {
+    getCapabilities: () => ipcRenderer.invoke('office:getCapabilities'),
+    mergeExcel: (request: ExcelMergeRequest) => ipcRenderer.invoke('office:mergeExcel', request),
+    generateWord: (request: WordSummaryRequest) => ipcRenderer.invoke('office:generateWord', request),
+    generatePpt: (request: PptSummaryRequest) => ipcRenderer.invoke('office:generatePpt', request)
+  },
+  git: {
+    listRepositories: (path, depth) => ipcRenderer.invoke('git:listRepositories', path, depth),
+    generateReport: (request: GitReportRequest) => ipcRenderer.invoke('git:generateReport', request)
+  },
+  openclaw: {
+    getConfig: () => ipcRenderer.invoke('openclaw:getConfig'),
+    saveConfig: (config: OpenClawConfig) => ipcRenderer.invoke('openclaw:saveConfig', config),
+    healthCheck: () => ipcRenderer.invoke('openclaw:healthCheck'),
+    execute: (request: OpenClawTaskRequest) => ipcRenderer.invoke('openclaw:execute', request)
+  }
+};
+
+contextBridge.exposeInMainWorld('dclaw', api);
