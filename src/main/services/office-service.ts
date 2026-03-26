@@ -8,11 +8,11 @@ import type {
   WordSummaryRequest
 } from '../../shared/types';
 
-const require = createRequire(import.meta.url);
+const moduleRequire = createRequire(import.meta.url);
 
 function hasOptionalPackage(packageName: string): boolean {
   try {
-    require.resolve(packageName);
+    moduleRequire.resolve(packageName);
     return true;
   } catch {
     return false;

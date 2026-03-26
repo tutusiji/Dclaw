@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "description": "Dclaw wraps OpenClaw in an Electron client with local automation and git reporting.",
-  "main": "dist-electron/main/index.js",
+  "main": "dist-electron/main/index.cjs",
   "type": "module",
   "scripts": {
     "dev": "electron-vite dev",
@@ -23,15 +23,25 @@
     "xlsx": "^0.18.5"
   },
   "devDependencies": {
+    "@iconify-json/lucide": "^1.2.98",
     "@types/node": "^22.13.4",
     "@types/react": "^18.3.18",
     "@types/react-dom": "^18.3.5",
+    "@unocss/preset-icons": "^66.6.7",
+    "@unocss/preset-uno": "^66.6.7",
     "@vitejs/plugin-react": "^4.3.4",
     "electron": "^35.0.0",
     "electron-builder": "^25.1.8",
     "electron-vite": "^3.1.0",
     "typescript": "^5.8.2",
+    "unocss": "^66.6.7",
     "vite": "^6.2.0"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "electron",
+      "esbuild"
+    ]
   },
   "build": {
     "appId": "com.openclaw.dclaw",

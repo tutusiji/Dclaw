@@ -9,16 +9,18 @@ import type {
   OpenClawConfig,
   OpenClawTaskRequest,
   PptSummaryRequest,
+  DclawTaskTemplateExecutionRequest,
   TextMergeRequest,
   TextWriteRequest,
   WordSummaryRequest
 } from '../shared/types';
+import { DclawClientRuntime } from './runtime/dclaw-client-runtime';
 import { listDirectory, mergeCsv, mergeText, readText, writeText } from './services/file-service';
 import { generateReport, listRepositories } from './services/git-report-service';
 import { getOfficeCapabilities, generatePptSummary, generateWordSummary, mergeExcelFiles } from './services/office-service';
 import { OpenClawBridge } from './services/openclaw-bridge';
 
-export function registerIpcHandlers(openClawBridge: OpenClawBridge): void {
+export function registerIpcHandlers(openClawBridge: OpenClawBridge, clientRuntime: DclawClientRuntime): void {
   const handle = <TArgs extends unknown[]>(
     channel: string,
     listener: (_event: Electron.IpcMainInvokeEvent, ...args: TArgs) => unknown | Promise<unknown>
@@ -30,6 +32,7 @@ export function registerIpcHandlers(openClawBridge: OpenClawBridge): void {
   const handlers: DclawApi = {
     app: {
       async getEnvironment() {
+        const clientSnapshot = await clientRuntime.getSnapshot();
         const office = await getOfficeCapabilities();
         return {
           platform: process.platform,
@@ -39,7 +42,8 @@ export function registerIpcHandlers(openClawBridge: OpenClawBridge): void {
           home: app.getPath('home'),
           optionalOfficePackages: Object.entries(office)
             .filter(([, installed]) => installed)
-            .map(([name]) => name)
+            .map(([name]) => name),
+          clientRuntime: clientSnapshot
         };
       },
       async pickFiles(filters) {
@@ -62,6 +66,16 @@ export function registerIpcHandlers(openClawBridge: OpenClawBridge): void {
         });
         return result.canceled ? null : result.filePath ?? null;
       }
+    },
+    client: {
+      getRuntimeSnapshot: () => clientRuntime.getSnapshot(),
+      listSkills: () => Promise.resolve(clientRuntime.listSkills()),
+      listAgents: () => Promise.resolve(clientRuntime.listAgents()),
+      listWorkflows: () => Promise.resolve(clientRuntime.listWorkflows()),
+      listTaskTemplates: () => Promise.resolve(clientRuntime.listTaskTemplates()),
+      listInstallations: () => clientRuntime.listInstallations(),
+      listTaskRuns: (limit?: number) => clientRuntime.listTaskRuns(limit),
+      runTaskTemplate: (request: DclawTaskTemplateExecutionRequest) => clientRuntime.runTaskTemplate(request)
     },
     files: {
       listDirectory,
@@ -97,6 +111,16 @@ export function registerIpcHandlers(openClawBridge: OpenClawBridge): void {
   handle('app:pickDirectory', () => handlers.app.pickDirectory());
   handle('app:pickSavePath', (_event, defaultPath: string | undefined, filters: FileDialogFilter[] | undefined) =>
     handlers.app.pickSavePath(defaultPath, filters)
+  );
+  handle('client:getRuntimeSnapshot', () => handlers.client.getRuntimeSnapshot());
+  handle('client:listSkills', () => handlers.client.listSkills());
+  handle('client:listAgents', () => handlers.client.listAgents());
+  handle('client:listWorkflows', () => handlers.client.listWorkflows());
+  handle('client:listTaskTemplates', () => handlers.client.listTaskTemplates());
+  handle('client:listInstallations', () => handlers.client.listInstallations());
+  handle('client:listTaskRuns', (_event, limit?: number) => handlers.client.listTaskRuns(limit));
+  handle('client:runTaskTemplate', (_event, request: DclawTaskTemplateExecutionRequest) =>
+    handlers.client.runTaskTemplate(request)
   );
   handle('files:listDirectory', (_event, path: string) => handlers.files.listDirectory(path));
   handle('files:readText', (_event, path: string) => handlers.files.readText(path));

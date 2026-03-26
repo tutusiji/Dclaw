@@ -1,1441 +1,627 @@
 import { useEffect, useState } from 'react';
-import type {
-  EnvironmentInfo,
-  GitReportResult,
-  GitRepository,
-  OfficeCapabilityMatrix,
-  OpenClawAgentSummary,
-  OpenClawConfig,
-  OpenClawThinkingLevel
-} from '@shared/types';
-import { Panel } from './components/Panel';
-import { buildOpenClawReportPrompt, extractOpenClawReportText, getAiTemplateLabel, type AiReportTemplate } from './reporting';
+import type { EnvironmentInfo } from '@shared/types';
+import { DesktopSidebar } from './components/DesktopSidebar';
+import { InspirationDetailModal } from './components/InspirationDetailModal';
+import { SettingsModal } from './components/SettingsModal';
+import { BrandMark } from './components/BrandMark';
+import { HOME_LAUNCH_CARDS, INSPIRATION_ITEMS, type InspirationCategoryId, type SettingsSectionId } from './ui-shell-data';
+import { useI18n } from './i18n';
+import { BridgePage } from './pages/BridgePage';
+import { AutomationPage } from './pages/AutomationPage';
+import { ReportsPage } from './pages/ReportsPage';
+import { RuntimePage } from './pages/RuntimePage';
+import { ConversationHomePage } from './pages/ConversationHomePage';
+import { InspirationSquarePage } from './pages/InspirationSquarePage';
+import { ScheduleCenterPage } from './pages/ScheduleCenterPage';
+import { StudioPage, type StudioSection } from './pages/StudioPage';
+import { getAiTemplateLabel } from './reporting';
+import { useAutomationWorkspace } from './hooks/useAutomationWorkspace';
+import { useClientRuntime } from './hooks/useClientRuntime';
+import { useConversationCenter } from './hooks/useConversationCenter';
+import { useFileDialogActions } from './hooks/useFileDialogActions';
+import { useGitReports } from './hooks/useGitReports';
+import { useOpenClawBridge } from './hooks/useOpenClawBridge';
+import { useTaskRunner } from './hooks/useTaskRunner';
 
-const DEFAULT_OPENCLAW_CONFIG: OpenClawConfig = {
-  mode: 'cli',
-  cliPath: 'openclaw',
-  defaultAgentId: 'main'
-};
+type MainSection = 'conversation' | 'inspiration' | 'schedule';
+type ConversationTab = 'dialogue' | 'studio';
 
-function splitLines(value: string): string[] {
-  return value
-    .split(/\r?\n/)
-    .map((item) => item.trim())
-    .filter(Boolean);
-}
-
-function splitArgs(value: string): string[] {
-  return value
-    .split(/\s+/)
-    .map((item) => item.trim())
-    .filter(Boolean);
-}
-
-function formatJson(value: unknown): string {
-  if (typeof value === 'string') {
-    return value;
-  }
-
-  return JSON.stringify(value, null, 2);
-}
+const CONVERSATION_BUCKET_ORDER = ['today', 'week', 'month'] as const;
 
 export function App() {
+  const { locale, setLocale, t } = useI18n();
   const [environment, setEnvironment] = useState<EnvironmentInfo | null>(null);
-  const [capabilities, setCapabilities] = useState<OfficeCapabilityMatrix>({
-    xlsx: false,
-    docx: false,
-    pptx: false
+  const [mainSection, setMainSection] = useState<MainSection>('conversation');
+  const [conversationTab, setConversationTab] = useState<ConversationTab>('dialogue');
+  const [studioSection, setStudioSection] = useState<StudioSection>('runtime');
+  const [sidebarQuery, setSidebarQuery] = useState('');
+  const [selectedInspirationId, setSelectedInspirationId] = useState<string | null>(null);
+  const [selectedInspirationCategory, setSelectedInspirationCategory] = useState<InspirationCategoryId>('all');
+  const [scheduleDraft, setScheduleDraft] = useState('');
+  const [settingsSection, setSettingsSection] = useState<SettingsSectionId>('general');
+  const [settingsOpen, setSettingsOpen] = useState(false);
+
+  const taskRunner = useTaskRunner({ locale, t });
+  const fileDialogs = useFileDialogActions();
+  const openClawBridge = useOpenClawBridge({ t, runTask: taskRunner.runTask });
+  const automation = useAutomationWorkspace({ t, runTask: taskRunner.runTask });
+  const clientRuntime = useClientRuntime({
+    environment,
+    setEnvironment,
+    t,
+    setActivity: taskRunner.setActivity,
+    runTask: taskRunner.runTask
   });
-  const [busy, setBusy] = useState<string | null>(null);
-  const [activity, setActivity] = useState('Bootstrapping Dclaw workspace.');
-
-  const [openClawConfig, setOpenClawConfig] = useState<OpenClawConfig>(DEFAULT_OPENCLAW_CONFIG);
-  const [openClawAgents, setOpenClawAgents] = useState<OpenClawAgentSummary[]>([]);
-  const [openClawAgentId, setOpenClawAgentId] = useState('main');
-  const [openClawSessionId, setOpenClawSessionId] = useState('');
-  const [openClawRecipient, setOpenClawRecipient] = useState('');
-  const [openClawChannel, setOpenClawChannel] = useState('');
-  const [openClawThinking, setOpenClawThinking] = useState<OpenClawThinkingLevel>('medium');
-  const [openClawTimeoutSeconds, setOpenClawTimeoutSeconds] = useState('180');
-  const [openClawMessage, setOpenClawMessage] = useState('Summarize the current workspace status for this week.');
-  const [openClawLocal, setOpenClawLocal] = useState(false);
-  const [openClawDeliver, setOpenClawDeliver] = useState(false);
-  const [defaultArgsText, setDefaultArgsText] = useState('');
-  const [openClawRequestPath, setOpenClawRequestPath] = useState('/api/tasks');
-  const [openClawMethod, setOpenClawMethod] = useState<'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE'>('POST');
-  const [openClawPayload, setOpenClawPayload] = useState('{\n  "prompt": "Summarize the current sprint status."\n}');
-  const [openClawArgsText, setOpenClawArgsText] = useState('gateway status --json');
-  const [openClawResult, setOpenClawResult] = useState('');
-
-  const [directoryPath, setDirectoryPath] = useState('');
-  const [directoryEntries, setDirectoryEntries] = useState<string[]>([]);
-
-  const [textFilesText, setTextFilesText] = useState('');
-  const [textSeparator, setTextSeparator] = useState('\n\n---\n\n');
-  const [textOutputPath, setTextOutputPath] = useState('');
-  const [textMergePreview, setTextMergePreview] = useState('');
-
-  const [csvFilesText, setCsvFilesText] = useState('');
-  const [csvOutputPath, setCsvOutputPath] = useState('');
-  const [csvDedupeKeys, setCsvDedupeKeys] = useState('');
-  const [csvPreview, setCsvPreview] = useState('');
-
-  const [excelFilesText, setExcelFilesText] = useState('');
-  const [excelOutputPath, setExcelOutputPath] = useState('');
-  const [excelResult, setExcelResult] = useState('');
-
-  const [wordTitle, setWordTitle] = useState('Team Summary');
-  const [wordParagraphsText, setWordParagraphsText] = useState(
-    'This document was generated by Dclaw.\n\nReplace this with your operational summary.'
-  );
-  const [wordOutputPath, setWordOutputPath] = useState('');
-  const [wordResult, setWordResult] = useState('');
-
-  const [pptTitle, setPptTitle] = useState('Project Digest');
-  const [pptBulletsText, setPptBulletsText] = useState(
-    'OpenClaw integration progress\nLocal automation tasks completed\nGit activity highlights'
-  );
-  const [pptOutputPath, setPptOutputPath] = useState('');
-  const [pptResult, setPptResult] = useState('');
-
-  const [gitSourceMode, setGitSourceMode] = useState<'repository' | 'workspace'>('workspace');
-  const [gitSourcePath, setGitSourcePath] = useState('');
-  const [gitDepth, setGitDepth] = useState('3');
-  const [gitPreset, setGitPreset] = useState<'week' | 'month' | 'custom'>('week');
-  const [gitStartDate, setGitStartDate] = useState('');
-  const [gitEndDate, setGitEndDate] = useState('');
-  const [gitAuthor, setGitAuthor] = useState('');
-  const [gitReportPath, setGitReportPath] = useState('');
-  const [gitRepositories, setGitRepositories] = useState<GitRepository[]>([]);
-  const [gitReport, setGitReport] = useState<GitReportResult | null>(null);
-  const [gitAiTemplate, setGitAiTemplate] = useState<AiReportTemplate>('auto_cn');
-  const [gitAiContext, setGitAiContext] = useState('');
-  const [gitAiOutputPath, setGitAiOutputPath] = useState('');
-  const [gitAiMarkdown, setGitAiMarkdown] = useState('');
+  const reports = useGitReports({
+    locale,
+    t,
+    runTask: taskRunner.runTask,
+    openClawConfig: openClawBridge.openClawConfig,
+    openClawAgentId: openClawBridge.openClawAgentId,
+    openClawThinking: openClawBridge.openClawThinking,
+    openClawTimeoutSeconds: openClawBridge.openClawTimeoutSeconds,
+    openClawLocal: openClawBridge.openClawLocal,
+    setOpenClawResult: openClawBridge.setOpenClawResult
+  });
+  const conversationCenter = useConversationCenter({
+    locale,
+    t,
+    runTask: taskRunner.runTask,
+    openClawConfig: openClawBridge.openClawConfig,
+    openClawAgentId: openClawBridge.openClawAgentId,
+    openClawSessionId: openClawBridge.openClawSessionId,
+    openClawThinking: openClawBridge.openClawThinking,
+    openClawLocal: openClawBridge.openClawLocal,
+    openClawTimeoutSeconds: openClawBridge.openClawTimeoutSeconds,
+    setOpenClawResult: openClawBridge.setOpenClawResult
+  });
 
   useEffect(() => {
     void bootstrap();
   }, []);
 
-  async function runTask(label: string, task: () => Promise<void>) {
-    setBusy(label);
-    setActivity(`${label}...`);
+  const conversationSearch = sidebarQuery.trim().toLowerCase();
+  const visibleConversations = conversationSearch
+    ? conversationCenter.conversations.filter((conversation) => {
+        const haystack = `${conversation.title}\n${conversation.messages.map((message) => message.content).join('\n')}`.toLowerCase();
+        return haystack.includes(conversationSearch);
+      })
+    : conversationCenter.conversations;
 
-    try {
-      await task();
-      setActivity(`${label} completed.`);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : 'Unknown error';
-      setActivity(`${label} failed: ${message}`);
-    } finally {
-      setBusy(null);
-    }
-  }
+  const groupedConversations = CONVERSATION_BUCKET_ORDER.map((bucket) => ({
+    bucket,
+    items: visibleConversations.filter((conversation) => conversation.bucket === bucket)
+  })).filter((group) => group.items.length > 0);
+
+  const selectedInspirationItem = INSPIRATION_ITEMS.find((item) => item.id === selectedInspirationId) ?? null;
+  const workspaceLabel = environment?.cwd ?? t('shell.app.workspaceLoading');
 
   async function bootstrap() {
-    await runTask('Loading environment', async () => {
-      const [env, config, office] = await Promise.all([
+    await taskRunner.runTask('task.loadingEnvironment', async () => {
+      const [environmentSnapshot, config, office, skills, agents, workflows, taskTemplates, installations, taskRuns] = await Promise.all([
         window.dclaw.app.getEnvironment(),
         window.dclaw.openclaw.getConfig(),
-        window.dclaw.office.getCapabilities()
+        window.dclaw.office.getCapabilities(),
+        window.dclaw.client.listSkills(),
+        window.dclaw.client.listAgents(),
+        window.dclaw.client.listWorkflows(),
+        window.dclaw.client.listTaskTemplates(),
+        window.dclaw.client.listInstallations(),
+        window.dclaw.client.listTaskRuns(8)
       ]);
 
-      setEnvironment(env);
-      setCapabilities(office);
-      setOpenClawConfig(config);
-      setOpenClawAgentId(config.defaultAgentId ?? 'main');
-      setDefaultArgsText((config.defaultArgs ?? []).join('\n'));
+      setEnvironment(environmentSnapshot);
+      automation.setCapabilities(office);
+      openClawBridge.hydrateConfig(config);
+      clientRuntime.hydrateRuntime({
+        skills,
+        agents,
+        workflows,
+        taskTemplates,
+        installations,
+        taskRuns
+      });
     });
   }
 
-  async function pickFilesInto(
-    setter: (value: string) => void,
-    filters: Array<{ name: string; extensions: string[] }>
-  ) {
-    const files = await window.dclaw.app.pickFiles(filters);
-    if (files.length > 0) {
-      setter(files.join('\n'));
+  function openConversationCenter() {
+    setMainSection('conversation');
+    setConversationTab('dialogue');
+  }
+
+  function openStudioSection(nextSection: StudioSection) {
+    setMainSection('conversation');
+    setConversationTab('studio');
+    setStudioSection(nextSection);
+  }
+
+  function openSettings(section: SettingsSectionId = 'general') {
+    setSettingsSection(section);
+    setSettingsOpen(true);
+  }
+
+  function getSectionTitle(section: MainSection) {
+    if (section === 'inspiration') {
+      return t('shell.app.section.inspiration');
     }
-  }
 
-  async function pickDirectoryInto(setter: (value: string) => void) {
-    const path = await window.dclaw.app.pickDirectory();
-    if (path) {
-      setter(path);
+    if (section === 'schedule') {
+      return t('shell.app.section.schedule');
     }
+
+    return t('shell.app.section.conversation');
   }
 
-  async function pickSavePathInto(
-    setter: (value: string) => void,
-    defaultPath: string,
-    filters: Array<{ name: string; extensions: string[] }>
-  ) {
-    const path = await window.dclaw.app.pickSavePath(defaultPath, filters);
-    if (path) {
-      setter(path);
+  function getHeaderEyebrow() {
+    if (mainSection === 'inspiration') {
+      return t('shell.inspiration.page.eyebrow');
     }
+
+    if (mainSection === 'schedule') {
+      return t('shell.schedule.page.eyebrow');
+    }
+
+    return conversationTab === 'studio' ? t('shell.studio.page.eyebrow') : t('shell.home.eyebrow');
   }
 
-  async function saveOpenClawConfig() {
-    await runTask('Saving OpenClaw config', async () => {
-      const saved = await window.dclaw.openclaw.saveConfig({
-        ...openClawConfig,
-        defaultArgs: splitLines(defaultArgsText)
-      });
-      setOpenClawConfig(saved);
-      setOpenClawAgentId(saved.defaultAgentId ?? openClawAgentId);
-      setDefaultArgsText((saved.defaultArgs ?? []).join('\n'));
-    });
+  function getHeaderTitle() {
+    if (mainSection === 'conversation') {
+      return conversationTab === 'studio' ? t('shell.app.tab.studio') : t('shell.app.section.conversation');
+    }
+
+    return getSectionTitle(mainSection);
   }
 
-  async function syncOpenClawInstall() {
-    await runTask('Syncing local OpenClaw install', async () => {
-      const synced = await window.dclaw.openclaw.syncLocalInstall();
-      setOpenClawConfig(synced);
-      setOpenClawAgentId(synced.defaultAgentId ?? 'main');
-      setDefaultArgsText((synced.defaultArgs ?? []).join('\n'));
-    });
+  function getHeaderDescription() {
+    if (mainSection === 'inspiration') {
+      return t('shell.inspiration.page.description');
+    }
+
+    if (mainSection === 'schedule') {
+      return t('shell.schedule.page.description');
+    }
+
+    return conversationTab === 'studio' ? t('shell.studio.page.description') : t('shell.home.emptyDescription');
   }
 
-  async function checkOpenClawHealth() {
-    await runTask('Running OpenClaw health check', async () => {
-      const result = await window.dclaw.openclaw.healthCheck();
-      setOpenClawResult(formatJson(result));
-    });
-  }
-
-  async function inspectOpenClawStatus() {
-    await runTask('Inspecting OpenClaw gateway', async () => {
-      const snapshot = await window.dclaw.openclaw.getStatus();
-      setOpenClawResult(formatJson(snapshot));
-      setOpenClawAgents(snapshot.agents);
-      if (snapshot.inferredConfig) {
-        setOpenClawConfig((current) => ({
-          ...current,
-          ...snapshot.inferredConfig,
-          mode: 'cli'
-        }));
-        if (snapshot.inferredConfig.defaultAgentId) {
-          setOpenClawAgentId(snapshot.inferredConfig.defaultAgentId);
-        }
-      }
-    });
-  }
-
-  async function loadOpenClawAgents() {
-    await runTask('Loading OpenClaw agents', async () => {
-      const agents = await window.dclaw.openclaw.listAgents();
-      setOpenClawAgents(agents);
-      const defaultAgent = agents.find((agent) => agent.isDefault)?.id ?? openClawConfig.defaultAgentId ?? 'main';
-      setOpenClawAgentId((current) => current || defaultAgent);
-    });
-  }
-
-  async function runOpenClawAgent() {
-    await runTask('Running OpenClaw agent turn', async () => {
-      const result = await window.dclaw.openclaw.runAgentTurn({
-        message: openClawMessage,
-        agentId: openClawAgentId || undefined,
-        sessionId: openClawSessionId || undefined,
-        to: openClawRecipient || undefined,
-        channel: openClawChannel || undefined,
-        deliver: openClawDeliver,
-        local: openClawLocal,
-        thinking: openClawThinking,
-        timeoutSeconds: Number(openClawTimeoutSeconds) || 180
-      });
-      setOpenClawResult(formatJson(result));
-    });
-  }
-
-  async function executeOpenClawTask() {
-    await runTask('Executing OpenClaw task', async () => {
-      const payload = openClawPayload.trim() ? JSON.parse(openClawPayload) : undefined;
-      const result = await window.dclaw.openclaw.execute({
-        path: openClawRequestPath,
-        method: openClawMethod,
-        payload,
-        args: splitArgs(openClawArgsText)
-      });
-      setOpenClawResult(formatJson(result));
-    });
-  }
-
-  async function scanDirectory() {
-    await runTask('Scanning directory', async () => {
-      const entries = await window.dclaw.files.listDirectory(directoryPath);
-      setDirectoryEntries(entries.map((entry) => `${entry.kind === 'directory' ? '[dir]' : '[file]'} ${entry.name}`));
-    });
-  }
-
-  async function mergeTextFiles() {
-    await runTask('Merging text files', async () => {
-      const result = await window.dclaw.files.mergeText({
-        files: splitLines(textFilesText),
-        separator: textSeparator,
-        outputPath: textOutputPath || undefined
-      });
-      setTextMergePreview(result.content);
-    });
-  }
-
-  async function mergeCsvFiles() {
-    await runTask('Merging CSV files', async () => {
-      const result = await window.dclaw.files.mergeCsv({
-        files: splitLines(csvFilesText),
-        outputPath: csvOutputPath || undefined,
-        dedupeBy: splitArgs(csvDedupeKeys)
-      });
-      setCsvPreview(formatJson(result));
-    });
-  }
-
-  async function refreshOfficeCapabilities() {
-    await runTask('Checking office packages', async () => {
-      const office = await window.dclaw.office.getCapabilities();
-      setCapabilities(office);
-    });
-  }
-
-  async function mergeExcel() {
-    await runTask('Merging Excel files', async () => {
-      const result = await window.dclaw.office.mergeExcel({
-        files: splitLines(excelFilesText),
-        outputPath: excelOutputPath,
-        sheetName: 'MergedData'
-      });
-      setExcelResult(formatJson(result));
-    });
-  }
-
-  async function generateWord() {
-    await runTask('Generating Word summary', async () => {
-      const result = await window.dclaw.office.generateWord({
-        title: wordTitle,
-        paragraphs: splitLines(wordParagraphsText),
-        outputPath: wordOutputPath
-      });
-      setWordResult(formatJson(result));
-    });
-  }
-
-  async function generatePpt() {
-    await runTask('Generating PPT summary', async () => {
-      const result = await window.dclaw.office.generatePpt({
-        title: pptTitle,
-        bullets: splitLines(pptBulletsText),
-        outputPath: pptOutputPath
-      });
-      setPptResult(formatJson(result));
-    });
-  }
-
-  function buildGitReportRequest() {
-    return {
-      sourceMode: gitSourceMode,
-      sourcePath: gitSourcePath,
-      preset: gitPreset,
-      startDate: gitPreset === 'custom' ? gitStartDate : undefined,
-      endDate: gitPreset === 'custom' ? gitEndDate : undefined,
-      author: gitAuthor || undefined,
-      depth: gitSourceMode === 'workspace' ? Number(gitDepth) || 3 : undefined
-    } as const;
-  }
-
-  async function findGitRepositories() {
-    await runTask('Scanning git repositories', async () => {
-      const repositories = await window.dclaw.git.listRepositories(gitSourcePath, Number(gitDepth) || 3);
-      setGitRepositories(repositories);
-    });
-  }
-
-  async function generateGitReport() {
-    await runTask('Generating git report', async () => {
-      const report = await window.dclaw.git.generateReport(buildGitReportRequest());
-      setGitReport(report);
-      setGitRepositories(report.repositories.map((section) => section.repository));
-    });
-  }
-
-  async function saveGitReport() {
-    if (!gitReport || !gitReportPath) {
+  function handleLaunchCardAction(launchCardId: string) {
+    if (launchCardId === 'install-skill') {
+      openStudioSection('bridge');
       return;
     }
 
-    await runTask('Saving git report', async () => {
-      await window.dclaw.files.writeText({
-        path: gitReportPath,
-        content: gitReport.markdown
-      });
-    });
-  }
-
-  async function generateOpenClawGitReport() {
-    await runTask('Generating Chinese report with OpenClaw', async () => {
-      const baseReport = await window.dclaw.git.generateReport(buildGitReportRequest());
-      setGitReport(baseReport);
-      setGitRepositories(baseReport.repositories.map((section) => section.repository));
-
-      const prompt = buildOpenClawReportPrompt({
-        report: baseReport,
-        template: gitAiTemplate,
-        sourcePath: gitSourcePath,
-        sourceMode: gitSourceMode,
-        extraContext: gitAiContext,
-        today: new Date().toISOString().slice(0, 10)
-      });
-
-      const result = await window.dclaw.openclaw.runAgentTurn({
-        message: prompt,
-        agentId: openClawAgentId || openClawConfig.defaultAgentId || 'main',
-        thinking: openClawThinking,
-        timeoutSeconds: Number(openClawTimeoutSeconds) || 180,
-        local: openClawLocal
-      });
-
-      setOpenClawResult(formatJson(result));
-      if (!result.ok) {
-        throw new Error(result.error ?? 'OpenClaw failed to generate the AI report.');
-      }
-
-      const aiMarkdown = extractOpenClawReportText(result.output ?? result.stdout ?? result);
-      setGitAiMarkdown(aiMarkdown);
-    });
-  }
-
-  async function saveOpenClawGitReport() {
-    if (!gitAiMarkdown || !gitAiOutputPath) {
+    if (launchCardId === 'file-organize') {
+      openStudioSection('automation');
       return;
     }
 
-    await runTask('Saving OpenClaw report', async () => {
-      await window.dclaw.files.writeText({
-        path: gitAiOutputPath,
-        content: gitAiMarkdown
-      });
-    });
+    if (launchCardId === 'schedule') {
+      setMainSection('schedule');
+      return;
+    }
+
+    if (launchCardId === 'mobile-office') {
+      conversationCenter.applyPrompt(t('shell.app.prompt.mobileOffice'));
+      openConversationCenter();
+      return;
+    }
+
+    if (launchCardId === 'send-mail') {
+      conversationCenter.applyPrompt(t('shell.app.prompt.mailWorkflow'));
+      openConversationCenter();
+    }
   }
 
-  const openClawModeHint =
-    openClawConfig.mode === 'cli'
-      ? 'Use CLI mode to bind directly to the installed OpenClaw gateway, agents, and local config.'
-      : openClawConfig.mode === 'http'
-        ? 'Use HTTP mode when OpenClaw exposes a local API.'
-        : 'Use command mode when OpenClaw is launched through a local binary or wrapper script.';
+  function handleUsePrompt(prompt: string) {
+    conversationCenter.applyPrompt(prompt);
+    setSelectedInspirationId(null);
+    setScheduleDraft('');
+    openConversationCenter();
+  }
+
+  function handleConversationSelect(conversationId: string) {
+    conversationCenter.setSelectedConversationId(conversationId);
+    openConversationCenter();
+  }
+
+  function handleCreateConversation() {
+    conversationCenter.createConversation();
+    openConversationCenter();
+  }
+
+  function handleScheduleSubmit() {
+    const prompt = scheduleDraft.trim();
+    if (!prompt) {
+      return;
+    }
+
+    handleUsePrompt(prompt);
+  }
+
+  function renderStudioContent() {
+    if (studioSection === 'runtime') {
+      return (
+        <RuntimePage
+          environment={environment}
+          busy={taskRunner.busy}
+          taskTemplates={clientRuntime.taskTemplates}
+          selectedTaskTemplateId={clientRuntime.selectedTaskTemplateId}
+          taskInputsText={clientRuntime.taskInputsText}
+          taskResult={clientRuntime.taskResult}
+          taskRuns={clientRuntime.taskRuns}
+          skills={clientRuntime.skills}
+          agents={clientRuntime.agents}
+          workflows={clientRuntime.workflows}
+          installations={clientRuntime.installations}
+          onTemplateChange={clientRuntime.handleTemplateChange}
+          onTaskInputsChange={clientRuntime.setTaskInputsText}
+          onRunTemplate={clientRuntime.runTemplate}
+          onRefreshRuntime={clientRuntime.refreshRuntime}
+          onResetInputs={clientRuntime.resetInputs}
+          onUseCurrentWorkspace={clientRuntime.useCurrentWorkspaceForTask}
+          onPickReportSource={() => clientRuntime.pickTaskDirectoryInput('sourcePath')}
+          onPickFolder={() => clientRuntime.pickTaskDirectoryInput('path')}
+          onPickExcelFiles={clientRuntime.pickTaskFilesInput}
+          onPickOutputPath={clientRuntime.pickTaskOutputPath}
+        />
+      );
+    }
+
+    if (studioSection === 'automation') {
+      return (
+        <AutomationPage
+          busy={taskRunner.busy}
+          capabilities={automation.capabilities}
+          directoryPath={automation.directoryPath}
+          setDirectoryPath={automation.setDirectoryPath}
+          directoryEntries={automation.directoryEntries}
+          textFilesText={automation.textFilesText}
+          setTextFilesText={automation.setTextFilesText}
+          textSeparator={automation.textSeparator}
+          setTextSeparator={automation.setTextSeparator}
+          textOutputPath={automation.textOutputPath}
+          setTextOutputPath={automation.setTextOutputPath}
+          textMergePreview={automation.textMergePreview}
+          csvFilesText={automation.csvFilesText}
+          setCsvFilesText={automation.setCsvFilesText}
+          csvOutputPath={automation.csvOutputPath}
+          setCsvOutputPath={automation.setCsvOutputPath}
+          csvDedupeKeys={automation.csvDedupeKeys}
+          setCsvDedupeKeys={automation.setCsvDedupeKeys}
+          csvPreview={automation.csvPreview}
+          excelFilesText={automation.excelFilesText}
+          setExcelFilesText={automation.setExcelFilesText}
+          excelOutputPath={automation.excelOutputPath}
+          setExcelOutputPath={automation.setExcelOutputPath}
+          excelResult={automation.excelResult}
+          wordTitle={automation.wordTitle}
+          setWordTitle={automation.setWordTitle}
+          wordParagraphsText={automation.wordParagraphsText}
+          setWordParagraphsText={automation.setWordParagraphsText}
+          wordOutputPath={automation.wordOutputPath}
+          setWordOutputPath={automation.setWordOutputPath}
+          wordResult={automation.wordResult}
+          pptTitle={automation.pptTitle}
+          setPptTitle={automation.setPptTitle}
+          pptBulletsText={automation.pptBulletsText}
+          setPptBulletsText={automation.setPptBulletsText}
+          pptOutputPath={automation.pptOutputPath}
+          setPptOutputPath={automation.setPptOutputPath}
+          pptResult={automation.pptResult}
+          onPickDirectory={fileDialogs.pickDirectoryInto}
+          onPickFiles={fileDialogs.pickFilesInto}
+          onPickSavePath={fileDialogs.pickSavePathInto}
+          onScanDirectory={automation.scanDirectory}
+          onMergeTextFiles={automation.mergeTextFiles}
+          onMergeCsvFiles={automation.mergeCsvFiles}
+          onRefreshOfficeCapabilities={automation.refreshOfficeCapabilities}
+          onMergeExcel={automation.mergeExcel}
+          onGenerateWord={automation.generateWord}
+          onGeneratePpt={automation.generatePpt}
+        />
+      );
+    }
+
+    if (studioSection === 'reports') {
+      return (
+        <ReportsPage
+          busy={taskRunner.busy}
+          gitSourceMode={reports.gitSourceMode}
+          setGitSourceMode={reports.setGitSourceMode}
+          gitSourcePath={reports.gitSourcePath}
+          setGitSourcePath={reports.setGitSourcePath}
+          gitDepth={reports.gitDepth}
+          setGitDepth={reports.setGitDepth}
+          gitPreset={reports.gitPreset}
+          setGitPreset={reports.setGitPreset}
+          gitStartDate={reports.gitStartDate}
+          setGitStartDate={reports.setGitStartDate}
+          gitEndDate={reports.gitEndDate}
+          setGitEndDate={reports.setGitEndDate}
+          gitAuthor={reports.gitAuthor}
+          setGitAuthor={reports.setGitAuthor}
+          gitReportPath={reports.gitReportPath}
+          setGitReportPath={reports.setGitReportPath}
+          gitRepositories={reports.gitRepositories}
+          gitReport={reports.gitReport}
+          gitAiTemplate={reports.gitAiTemplate}
+          setGitAiTemplate={reports.setGitAiTemplate}
+          gitAiContext={reports.gitAiContext}
+          setGitAiContext={reports.setGitAiContext}
+          gitAiOutputPath={reports.gitAiOutputPath}
+          setGitAiOutputPath={reports.setGitAiOutputPath}
+          gitAiMarkdown={reports.gitAiMarkdown}
+          openClawAgents={openClawBridge.openClawAgents}
+          openClawAgentId={openClawBridge.openClawAgentId}
+          setOpenClawAgentId={openClawBridge.setOpenClawAgentId}
+          openClawConfig={openClawBridge.openClawConfig}
+          onPickDirectory={fileDialogs.pickDirectoryInto}
+          onPickSavePath={fileDialogs.pickSavePathInto}
+          onFindGitRepositories={reports.findGitRepositories}
+          onGenerateGitReport={reports.generateGitReport}
+          onSaveGitReport={reports.saveGitReport}
+          onGenerateOpenClawGitReport={reports.generateOpenClawGitReport}
+          onSaveOpenClawGitReport={reports.saveOpenClawGitReport}
+          getAiTemplateLabel={(template, report) => getAiTemplateLabel(locale, template, report)}
+        />
+      );
+    }
+
+    return (
+      <BridgePage
+        busy={taskRunner.busy}
+        openClawConfig={openClawBridge.openClawConfig}
+        setOpenClawConfig={openClawBridge.setOpenClawConfig}
+        defaultArgsText={openClawBridge.defaultArgsText}
+        setDefaultArgsText={openClawBridge.setDefaultArgsText}
+        openClawAgents={openClawBridge.openClawAgents}
+        openClawAgentId={openClawBridge.openClawAgentId}
+        setOpenClawAgentId={openClawBridge.setOpenClawAgentId}
+        openClawSessionId={openClawBridge.openClawSessionId}
+        setOpenClawSessionId={openClawBridge.setOpenClawSessionId}
+        openClawRecipient={openClawBridge.openClawRecipient}
+        setOpenClawRecipient={openClawBridge.setOpenClawRecipient}
+        openClawChannel={openClawBridge.openClawChannel}
+        setOpenClawChannel={openClawBridge.setOpenClawChannel}
+        openClawThinking={openClawBridge.openClawThinking}
+        setOpenClawThinking={openClawBridge.setOpenClawThinking}
+        openClawTimeoutSeconds={openClawBridge.openClawTimeoutSeconds}
+        setOpenClawTimeoutSeconds={openClawBridge.setOpenClawTimeoutSeconds}
+        openClawMessage={openClawBridge.openClawMessage}
+        setOpenClawMessage={openClawBridge.setOpenClawMessage}
+        openClawLocal={openClawBridge.openClawLocal}
+        setOpenClawLocal={openClawBridge.setOpenClawLocal}
+        openClawDeliver={openClawBridge.openClawDeliver}
+        setOpenClawDeliver={openClawBridge.setOpenClawDeliver}
+        openClawRequestPath={openClawBridge.openClawRequestPath}
+        setOpenClawRequestPath={openClawBridge.setOpenClawRequestPath}
+        openClawMethod={openClawBridge.openClawMethod}
+        setOpenClawMethod={openClawBridge.setOpenClawMethod}
+        openClawPayload={openClawBridge.openClawPayload}
+        setOpenClawPayload={openClawBridge.setOpenClawPayload}
+        openClawArgsText={openClawBridge.openClawArgsText}
+        setOpenClawArgsText={openClawBridge.setOpenClawArgsText}
+        openClawResult={openClawBridge.openClawResult}
+        onSyncLocalInstall={openClawBridge.syncLocalInstall}
+        onSaveConfig={openClawBridge.saveConfig}
+        onCheckHealth={openClawBridge.checkHealth}
+        onInspectStatus={openClawBridge.inspectStatus}
+        onLoadAgents={openClawBridge.loadAgents}
+        onRunAgent={openClawBridge.runAgent}
+        onExecuteTask={openClawBridge.executeTask}
+      />
+    );
+  }
 
   return (
-    <div className="app-shell">
-      <div className="hero">
-        <div className="hero__copy">
-          <span className="hero__eyebrow">Electron workbench for OpenClaw</span>
-          <h1>Dclaw</h1>
-          <p>
-            A desktop shell for OpenClaw with local file automation, Office task bridges, and git-driven weekly
-            or monthly reports.
-          </p>
-        </div>
-        <div className="hero__status">
-          <div className="metric-card">
-            <span>Platform</span>
-            <strong>{environment ? `${environment.platform} / ${environment.arch}` : 'Loading...'}</strong>
-          </div>
-          <div className="metric-card">
-            <span>Office packages</span>
-            <strong>{environment?.optionalOfficePackages.join(', ') || 'None installed yet'}</strong>
-          </div>
-          <div className="metric-card">
-            <span>Activity</span>
-            <strong>{busy ?? 'Idle'}</strong>
-          </div>
-        </div>
-      </div>
+    <div className="relative min-h-screen overflow-hidden bg-[linear-gradient(135deg,#f9ede1_0%,#f3e5da_42%,#eee4da_100%)] p-5 text-[#241914]">
+      <div className="pointer-events-none absolute left-[-120px] top-[-120px] h-[340px] w-[340px] rounded-full bg-[#ffd9b8]/45 blur-3xl" />
+      <div className="pointer-events-none absolute bottom-[-120px] right-[-80px] h-[300px] w-[300px] rounded-full bg-[#ffe5d2]/38 blur-3xl" />
 
-      <div className="status-bar">
-        <span className={busy ? 'status-dot status-dot--busy' : 'status-dot'} />
-        <span>{activity}</span>
-      </div>
+      <div className="relative mx-auto flex h-[calc(100vh-2.5rem)] max-w-[1660px] overflow-hidden rounded-[44px] border border-white/74 bg-[#f9efe4]/90 shadow-[0_34px_96px_rgba(78,53,29,0.18)] backdrop-blur-xl">
+        <DesktopSidebar
+          mainSection={mainSection}
+          sidebarQuery={sidebarQuery}
+          groupedConversations={groupedConversations}
+          selectedConversationId={conversationCenter.selectedConversationId}
+          workspaceLabel={workspaceLabel}
+          activity={taskRunner.activity}
+          busy={taskRunner.busy}
+          onSidebarQueryChange={setSidebarQuery}
+          onSelectConversation={handleConversationSelect}
+          onCreateConversation={handleCreateConversation}
+          onSelectSection={(section) => {
+            if (section === 'conversation') {
+              openConversationCenter();
+              return;
+            }
 
-      <main className="workspace-grid">
-        <Panel
-          eyebrow="Bridge"
-          title="OpenClaw Adapter"
-          subtitle="Bind Dclaw to the real OpenClaw CLI, gateway, agents, or fall back to HTTP and wrapper commands."
-        >
-          <div className="subgrid two-up">
-            <label className="field">
-              <span>Mode</span>
-              <select
-                value={openClawConfig.mode}
-                onChange={(event) =>
-                  setOpenClawConfig({
-                    ...openClawConfig,
-                    mode: event.target.value as OpenClawConfig['mode']
-                  })
-                }
-              >
-                <option value="cli">OpenClaw CLI</option>
-                <option value="http">HTTP</option>
-                <option value="command">Command</option>
-              </select>
-            </label>
-            <div className="info-card">
-              <strong>Hint</strong>
-              <p>{openClawModeHint}</p>
-            </div>
-          </div>
+            setMainSection(section);
+          }}
+          onOpenSettings={() => openSettings('general')}
+        />
 
-          {openClawConfig.mode === 'cli' ? (
-            <>
-              <div className="subgrid two-up">
-                <label className="field">
-                  <span>CLI path</span>
-                  <input
-                    value={openClawConfig.cliPath ?? ''}
-                    onChange={(event) =>
-                      setOpenClawConfig({
-                        ...openClawConfig,
-                        cliPath: event.target.value
-                      })
-                    }
-                    placeholder="openclaw"
-                  />
-                </label>
-                <label className="field">
-                  <span>Profile</span>
-                  <input
-                    value={openClawConfig.profile ?? ''}
-                    onChange={(event) =>
-                      setOpenClawConfig({
-                        ...openClawConfig,
-                        profile: event.target.value
-                      })
-                    }
-                    placeholder="Optional named OpenClaw profile"
-                  />
-                </label>
-              </div>
+        <div className="flex min-w-0 flex-1 flex-col bg-[linear-gradient(180deg,#fffcf8_0%,#f9f0e7_100%)]">
+          <header className="relative overflow-hidden border-b border-[#eddcc8] bg-white/28 px-6 py-5 backdrop-blur-md">
+            <div className="pointer-events-none absolute inset-x-0 top-0 h-24 bg-[linear-gradient(180deg,rgba(255,255,255,0.34),transparent)]" />
 
-              <div className="subgrid three-up">
-                <label className="field">
-                  <span>Gateway port</span>
-                  <input
-                    value={openClawConfig.gatewayPort?.toString() ?? ''}
-                    onChange={(event) =>
-                      setOpenClawConfig({
-                        ...openClawConfig,
-                        gatewayPort: event.target.value ? Number(event.target.value) : undefined
-                      })
-                    }
-                    placeholder="6917"
-                  />
-                </label>
-                <label className="field">
-                  <span>Default agent</span>
-                  <input
-                    value={openClawConfig.defaultAgentId ?? ''}
-                    onChange={(event) =>
-                      setOpenClawConfig({
-                        ...openClawConfig,
-                        defaultAgentId: event.target.value
-                      })
-                    }
-                    placeholder="main"
-                  />
-                </label>
-                <label className="field">
-                  <span>Workspace path</span>
-                  <input
-                    value={openClawConfig.workspacePath ?? ''}
-                    onChange={(event) =>
-                      setOpenClawConfig({
-                        ...openClawConfig,
-                        workspacePath: event.target.value,
-                        workingDirectory: event.target.value
-                      })
-                    }
-                    placeholder="/root/.openclaw/workspace"
-                  />
-                </label>
-              </div>
-
-              <div className="subgrid two-up">
-                <label className="field">
-                  <span>Config path</span>
-                  <input
-                    value={openClawConfig.configPath ?? ''}
-                    onChange={(event) =>
-                      setOpenClawConfig({
-                        ...openClawConfig,
-                        configPath: event.target.value
-                      })
-                    }
-                    placeholder="~/.openclaw/openclaw.json"
-                  />
-                </label>
-                <label className="field">
-                  <span>Gateway URL</span>
-                  <input
-                    value={openClawConfig.gatewayUrl ?? ''}
-                    onChange={(event) =>
-                      setOpenClawConfig({
-                        ...openClawConfig,
-                        gatewayUrl: event.target.value
-                      })
-                    }
-                    placeholder="ws://127.0.0.1:6917"
-                  />
-                </label>
-              </div>
-            </>
-          ) : openClawConfig.mode === 'http' ? (
-            <div className="subgrid two-up">
-              <label className="field">
-                <span>Base URL</span>
-                <input
-                  value={openClawConfig.baseUrl ?? ''}
-                  onChange={(event) =>
-                    setOpenClawConfig({
-                      ...openClawConfig,
-                      baseUrl: event.target.value
-                    })
-                  }
-                  placeholder="http://127.0.0.1:6917"
-                />
-              </label>
-              <label className="field">
-                <span>API Key</span>
-                <input
-                  value={openClawConfig.apiKey ?? ''}
-                  onChange={(event) =>
-                    setOpenClawConfig({
-                      ...openClawConfig,
-                      apiKey: event.target.value
-                    })
-                  }
-                  placeholder="Optional bearer token"
-                />
-              </label>
-            </div>
-          ) : (
-            <div className="subgrid two-up">
-              <label className="field">
-                <span>Binary path</span>
-                <input
-                  value={openClawConfig.binaryPath ?? ''}
-                  onChange={(event) =>
-                    setOpenClawConfig({
-                      ...openClawConfig,
-                      binaryPath: event.target.value
-                    })
-                  }
-                  placeholder="/usr/local/bin/openclaw-wrapper"
-                />
-              </label>
-              <label className="field">
-                <span>Working directory</span>
-                <input
-                  value={openClawConfig.workingDirectory ?? ''}
-                  onChange={(event) =>
-                    setOpenClawConfig({
-                      ...openClawConfig,
-                      workingDirectory: event.target.value
-                    })
-                  }
-                  placeholder="/root/projects/openclaw"
-                />
-              </label>
-            </div>
-          )}
-
-          <label className="field">
-            <span>Default args</span>
-            <textarea
-              value={defaultArgsText}
-              onChange={(event) => setDefaultArgsText(event.target.value)}
-              placeholder="One arg per line"
-              rows={3}
-            />
-          </label>
-
-          <div className="button-row">
-            <button
-              className="button button--ghost"
-              onClick={() => void syncOpenClawInstall()}
-              disabled={Boolean(busy) || openClawConfig.mode !== 'cli'}
-            >
-              Sync local install
-            </button>
-            <button
-              className="button"
-              onClick={() => void saveOpenClawConfig()}
-              disabled={Boolean(busy)}
-            >
-              Save config
-            </button>
-            <button
-              className="button button--ghost"
-              onClick={() => void checkOpenClawHealth()}
-              disabled={Boolean(busy)}
-            >
-              Health check
-            </button>
-            <button
-              className="button button--ghost"
-              onClick={() => void inspectOpenClawStatus()}
-              disabled={Boolean(busy) || openClawConfig.mode !== 'cli'}
-            >
-              Gateway status
-            </button>
-            <button
-              className="button button--ghost"
-              onClick={() => void loadOpenClawAgents()}
-              disabled={Boolean(busy) || openClawConfig.mode !== 'cli'}
-            >
-              Load agents
-            </button>
-          </div>
-
-          {openClawConfig.mode === 'cli' ? (
-            <>
-              <div className="card">
-                <div className="card-header">
-                  <h3>Agent turn</h3>
-                  <span className="muted">
-                    Uses `openclaw agent --json` with gateway port override when needed.
+            <div className="relative flex flex-wrap items-start justify-between gap-4">
+              <div className="min-w-0 flex-1">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="inline-flex items-center gap-2 rounded-full border border-[#ead7c5] bg-white/82 px-3 py-2 text-xs font-semibold uppercase tracking-[0.14em] text-[#8a684c] shadow-[0_8px_18px_rgba(147,104,65,0.06)]">
+                    <BrandMark size="sm" className="h-8 w-8 rounded-[14px] shadow-none" iconClassName="h-3.5 w-3.5" />
+                    Dclaw Client
+                  </span>
+                  <span className="rounded-full border border-[#edd9c6] bg-[#fff6eb] px-3 py-2 text-xs font-semibold uppercase tracking-[0.16em] text-[#a58468]">
+                    {getHeaderEyebrow()}
                   </span>
                 </div>
-                <div className="subgrid three-up">
-                  <label className="field">
-                    <span>Agent</span>
-                    <input
-                      list="openclaw-agents"
-                      value={openClawAgentId}
-                      onChange={(event) => setOpenClawAgentId(event.target.value)}
-                      placeholder="main"
-                    />
-                    <datalist id="openclaw-agents">
-                      {openClawAgents.map((agent) => (
-                        <option
-                          key={agent.id}
-                          value={agent.id}
-                        />
-                      ))}
-                    </datalist>
-                  </label>
-                  <label className="field">
-                    <span>Session ID</span>
-                    <input
-                      value={openClawSessionId}
-                      onChange={(event) => setOpenClawSessionId(event.target.value)}
-                      placeholder="Optional existing session id"
-                    />
-                  </label>
-                  <label className="field">
-                    <span>Thinking</span>
-                    <select
-                      value={openClawThinking}
-                      onChange={(event) => setOpenClawThinking(event.target.value as OpenClawThinkingLevel)}
+
+                <div className="mt-4 flex flex-wrap items-end justify-between gap-4">
+                  <div className="min-w-0 max-w-[54rem]">
+                    <div className="text-[2rem] font-semibold tracking-[-0.04em] text-[#241914]">{getHeaderTitle()}</div>
+                    <p className="mt-2 text-sm leading-7 text-[#766352]">{getHeaderDescription()}</p>
+                  </div>
+
+                  {mainSection === 'conversation' ? (
+                    <div className="inline-flex rounded-full border border-[#ead7c5] bg-white/86 p-1 shadow-[0_8px_18px_rgba(147,104,65,0.08)]">
+                      <button
+                        type="button"
+                        onClick={() => setConversationTab('dialogue')}
+                        className={[
+                          'rounded-full px-5 py-2 text-sm font-semibold transition',
+                          conversationTab === 'dialogue' ? 'bg-[#241b17] text-[#fff5ec]' : 'text-[#7a6454] hover:bg-[#fff7ef]'
+                        ].join(' ')}
+                      >
+                        {t('shell.app.tab.dialogue')}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setConversationTab('studio')}
+                        className={[
+                          'rounded-full px-5 py-2 text-sm font-semibold transition',
+                          conversationTab === 'studio' ? 'bg-[#241b17] text-[#fff5ec]' : 'text-[#7a6454] hover:bg-[#fff7ef]'
+                        ].join(' ')}
+                      >
+                        {t('shell.app.tab.studio')}
+                      </button>
+                    </div>
+                  ) : null}
+                </div>
+              </div>
+
+              <div className="flex flex-wrap items-center justify-end gap-3">
+                <div className="flex min-w-[250px] items-center gap-3 rounded-[24px] border border-[#ead7c5] bg-white/86 px-4 py-3 shadow-[0_10px_20px_rgba(147,104,65,0.06)]">
+                  <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-[16px] bg-[#fff1e2] text-[#b36d33]">
+                    <span className="i-lucide-folder-tree h-4 w-4" />
+                  </span>
+                  <div className="min-w-0">
+                    <div className="text-[11px] font-semibold uppercase tracking-[0.12em] text-[#a08267]">{t('shell.app.workspaceLabel')}</div>
+                    <div className="truncate text-sm font-semibold text-[#241914]">{workspaceLabel}</div>
+                  </div>
+                </div>
+
+                <div className="flex min-w-[240px] items-center gap-3 rounded-[24px] border border-[#ead7c5] bg-white/86 px-4 py-3 shadow-[0_10px_20px_rgba(147,104,65,0.06)]">
+                  <span className={['h-2.5 w-2.5 rounded-full', taskRunner.busy ? 'bg-[#f3b25d]' : 'bg-[#79c685]'].join(' ')} />
+                  <div className="min-w-0">
+                    <div className="text-[11px] font-semibold uppercase tracking-[0.12em] text-[#a08267]">{t('shell.studio.metric.runs')}</div>
+                    <div className="truncate text-sm font-semibold text-[#241914]">
+                      {taskRunner.busy ? t('shell.app.status.runningShort', { label: taskRunner.busy }) : taskRunner.activity}
+                    </div>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-3 rounded-[24px] border border-[#ead7c5] bg-white/84 px-2 py-2 shadow-[0_8px_18px_rgba(147,104,65,0.06)]">
+                  <div className="inline-flex rounded-full bg-[#f8efe7] p-1">
+                    <button
+                      type="button"
+                      onClick={() => setLocale('zh-CN')}
+                      className={[
+                        'rounded-full px-4 py-2 text-sm font-semibold transition',
+                        locale === 'zh-CN' ? 'bg-[#241b17] text-[#fff5ec]' : 'text-[#7a6454] hover:bg-white'
+                      ].join(' ')}
                     >
-                      <option value="off">off</option>
-                      <option value="minimal">minimal</option>
-                      <option value="low">low</option>
-                      <option value="medium">medium</option>
-                      <option value="high">high</option>
-                      <option value="xhigh">xhigh</option>
-                    </select>
-                  </label>
-                </div>
+                      {t('shell.locale.zh')}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setLocale('en-US')}
+                      className={[
+                        'rounded-full px-4 py-2 text-sm font-semibold transition',
+                        locale === 'en-US' ? 'bg-[#241b17] text-[#fff5ec]' : 'text-[#7a6454] hover:bg-white'
+                      ].join(' ')}
+                    >
+                      {t('shell.locale.en')}
+                    </button>
+                  </div>
 
-                <div className="subgrid three-up">
-                  <label className="field">
-                    <span>Recipient</span>
-                    <input
-                      value={openClawRecipient}
-                      onChange={(event) => setOpenClawRecipient(event.target.value)}
-                      placeholder="Optional --to target"
-                    />
-                  </label>
-                  <label className="field">
-                    <span>Channel</span>
-                    <input
-                      value={openClawChannel}
-                      onChange={(event) => setOpenClawChannel(event.target.value)}
-                      placeholder="Optional routing channel"
-                    />
-                  </label>
-                  <label className="field">
-                    <span>Timeout seconds</span>
-                    <input
-                      value={openClawTimeoutSeconds}
-                      onChange={(event) => setOpenClawTimeoutSeconds(event.target.value)}
-                      placeholder="180"
-                    />
-                  </label>
-                </div>
-
-                <div className="pill-row">
                   <button
                     type="button"
-                    className={`pill ${openClawLocal ? 'pill--ok' : 'pill--off'}`}
-                    onClick={() => setOpenClawLocal((current) => !current)}
+                    onClick={() => openSettings('general')}
+                    className="flex h-11 w-11 items-center justify-center rounded-[18px] border border-[#ead7c5] bg-white/88 text-[#775d4c] transition hover:bg-[#fff7ef]"
                   >
-                    local {openClawLocal ? 'on' : 'off'}
-                  </button>
-                  <button
-                    type="button"
-                    className={`pill ${openClawDeliver ? 'pill--ok' : 'pill--off'}`}
-                    onClick={() => setOpenClawDeliver((current) => !current)}
-                  >
-                    deliver {openClawDeliver ? 'on' : 'off'}
+                    <span className="i-lucide-settings-2 h-4 w-4" />
                   </button>
                 </div>
-
-                <label className="field">
-                  <span>Message</span>
-                  <textarea
-                    value={openClawMessage}
-                    onChange={(event) => setOpenClawMessage(event.target.value)}
-                    rows={6}
-                  />
-                </label>
-
-                <div className="button-row">
-                  <button
-                    className="button"
-                    onClick={() => void runOpenClawAgent()}
-                    disabled={Boolean(busy)}
-                  >
-                    Run agent
-                  </button>
-                </div>
-              </div>
-
-              <div className="subsection">
-                <h4>Advanced raw CLI</h4>
-                <label className="field">
-                  <span>CLI args</span>
-                  <input
-                    value={openClawArgsText}
-                    onChange={(event) => setOpenClawArgsText(event.target.value)}
-                    placeholder="gateway status --json"
-                  />
-                </label>
-                <label className="field">
-                  <span>Payload env</span>
-                  <textarea
-                    value={openClawPayload}
-                    onChange={(event) => setOpenClawPayload(event.target.value)}
-                    rows={5}
-                  />
-                </label>
-                <div className="button-row">
-                  <button
-                    className="button button--ghost"
-                    onClick={() => void executeOpenClawTask()}
-                    disabled={Boolean(busy)}
-                  >
-                    Execute raw CLI
-                  </button>
-                </div>
-              </div>
-            </>
-          ) : (
-            <>
-              <div className="subgrid two-up">
-                <label className="field">
-                  <span>Request path</span>
-                  <input
-                    value={openClawRequestPath}
-                    onChange={(event) => setOpenClawRequestPath(event.target.value)}
-                    placeholder="/api/tasks"
-                  />
-                </label>
-                <label className="field">
-                  <span>Method</span>
-                  <select
-                    value={openClawMethod}
-                    onChange={(event) => setOpenClawMethod(event.target.value as typeof openClawMethod)}
-                  >
-                    <option value="GET">GET</option>
-                    <option value="POST">POST</option>
-                    <option value="PUT">PUT</option>
-                    <option value="PATCH">PATCH</option>
-                    <option value="DELETE">DELETE</option>
-                  </select>
-                </label>
-              </div>
-
-              <label className="field">
-                <span>Request payload</span>
-                <textarea
-                  value={openClawPayload}
-                  onChange={(event) => setOpenClawPayload(event.target.value)}
-                  rows={7}
-                />
-              </label>
-
-              <label className="field">
-                <span>Command args</span>
-                <input
-                  value={openClawArgsText}
-                  onChange={(event) => setOpenClawArgsText(event.target.value)}
-                  placeholder={openClawConfig.mode === 'http' ? 'Optional request args' : 'Used in command mode only'}
-                />
-              </label>
-
-              <div className="button-row">
-                <button
-                  className="button"
-                  onClick={() => void executeOpenClawTask()}
-                  disabled={Boolean(busy)}
-                >
-                  Execute
-                </button>
-              </div>
-            </>
-          )}
-
-          <pre className="result-box">{openClawResult || 'Result output will appear here.'}</pre>
-        </Panel>
-
-        <Panel
-          eyebrow="Local Ops"
-          title="Local Automation"
-          subtitle="Use Dclaw as an automation shell for files, CSV consolidation, and Office-oriented outputs."
-          className="panel--wide"
-        >
-          <div className="local-grid">
-            <div className="card">
-              <h3>Directory snapshot</h3>
-              <label className="field">
-                <span>Directory path</span>
-                <div className="inline-field">
-                  <input
-                    value={directoryPath}
-                    onChange={(event) => setDirectoryPath(event.target.value)}
-                    placeholder="/root/projects"
-                  />
-                  <button
-                    className="button button--ghost"
-                    onClick={() => void pickDirectoryInto(setDirectoryPath)}
-                    disabled={Boolean(busy)}
-                  >
-                    Browse
-                  </button>
-                </div>
-              </label>
-              <button
-                className="button"
-                onClick={() => void scanDirectory()}
-                disabled={Boolean(busy)}
-              >
-                Scan
-              </button>
-              <div className="list-box">
-                {directoryEntries.length === 0 ? (
-                  <span className="muted">No snapshot loaded.</span>
-                ) : (
-                  directoryEntries.slice(0, 18).map((entry) => <div key={entry}>{entry}</div>)
-                )}
               </div>
             </div>
+          </header>
 
-            <div className="card">
-              <h3>Text merge</h3>
-              <label className="field">
-                <span>Input files</span>
-                <textarea
-                  value={textFilesText}
-                  onChange={(event) => setTextFilesText(event.target.value)}
-                  rows={5}
-                  placeholder="One file path per line"
-                />
-              </label>
-              <div className="button-row">
-                <button
-                  className="button button--ghost"
-                  onClick={() =>
-                    void pickFilesInto(setTextFilesText, [
-                      { name: 'Text', extensions: ['txt', 'md', 'log', 'json', 'csv'] }
-                    ])
-                  }
-                  disabled={Boolean(busy)}
-                >
-                  Pick files
-                </button>
-                <button
-                  className="button button--ghost"
-                  onClick={() =>
-                    void pickSavePathInto(setTextOutputPath, 'merged-output.txt', [
-                      { name: 'Text', extensions: ['txt', 'md'] }
-                    ])
-                  }
-                  disabled={Boolean(busy)}
-                >
-                  Pick output
-                </button>
-              </div>
-              <label className="field">
-                <span>Separator</span>
-                <textarea
-                  value={textSeparator}
-                  onChange={(event) => setTextSeparator(event.target.value)}
-                  rows={3}
-                />
-              </label>
-              <label className="field">
-                <span>Output path</span>
-                <input
-                  value={textOutputPath}
-                  onChange={(event) => setTextOutputPath(event.target.value)}
-                  placeholder="Optional"
-                />
-              </label>
-              <button
-                className="button"
-                onClick={() => void mergeTextFiles()}
-                disabled={Boolean(busy)}
-              >
-                Merge text
-              </button>
-              <pre className="result-box result-box--compact">{textMergePreview || 'Merged text preview.'}</pre>
-            </div>
-
-            <div className="card">
-              <h3>CSV merge</h3>
-              <label className="field">
-                <span>CSV files</span>
-                <textarea
-                  value={csvFilesText}
-                  onChange={(event) => setCsvFilesText(event.target.value)}
-                  rows={5}
-                  placeholder="One CSV path per line"
-                />
-              </label>
-              <div className="button-row">
-                <button
-                  className="button button--ghost"
-                  onClick={() =>
-                    void pickFilesInto(setCsvFilesText, [{ name: 'CSV', extensions: ['csv'] }])
-                  }
-                  disabled={Boolean(busy)}
-                >
-                  Pick CSV
-                </button>
-                <button
-                  className="button button--ghost"
-                  onClick={() =>
-                    void pickSavePathInto(setCsvOutputPath, 'merged-data.csv', [
-                      { name: 'CSV', extensions: ['csv'] }
-                    ])
-                  }
-                  disabled={Boolean(busy)}
-                >
-                  Pick output
-                </button>
-              </div>
-              <label className="field">
-                <span>Dedupe keys</span>
-                <input
-                  value={csvDedupeKeys}
-                  onChange={(event) => setCsvDedupeKeys(event.target.value)}
-                  placeholder="Split by spaces, for example id email"
-                />
-              </label>
-              <label className="field">
-                <span>Output path</span>
-                <input
-                  value={csvOutputPath}
-                  onChange={(event) => setCsvOutputPath(event.target.value)}
-                  placeholder="Optional"
-                />
-              </label>
-              <button
-                className="button"
-                onClick={() => void mergeCsvFiles()}
-                disabled={Boolean(busy)}
-              >
-                Merge CSV
-              </button>
-              <pre className="result-box result-box--compact">{csvPreview || 'CSV merge preview.'}</pre>
-            </div>
-
-            <div className="card">
-              <div className="card-header">
-                <h3>Office bridge</h3>
-                <button
-                  className="button button--ghost"
-                  onClick={() => void refreshOfficeCapabilities()}
-                  disabled={Boolean(busy)}
-                >
-                  Refresh
-                </button>
-              </div>
-              <div className="pill-row">
-                <span className={`pill ${capabilities.xlsx ? 'pill--ok' : 'pill--off'}`}>xlsx</span>
-                <span className={`pill ${capabilities.docx ? 'pill--ok' : 'pill--off'}`}>docx</span>
-                <span className={`pill ${capabilities.pptx ? 'pill--ok' : 'pill--off'}`}>pptx</span>
-              </div>
-
-              <div className="subsection">
-                <h4>Excel merge</h4>
-                <textarea
-                  value={excelFilesText}
-                  onChange={(event) => setExcelFilesText(event.target.value)}
-                  rows={4}
-                  placeholder="One XLSX path per line"
-                />
-                <div className="button-row">
-                  <button
-                    className="button button--ghost"
-                    onClick={() =>
-                      void pickFilesInto(setExcelFilesText, [{ name: 'Excel', extensions: ['xlsx'] }])
-                    }
-                    disabled={Boolean(busy)}
-                  >
-                    Pick Excel
-                  </button>
-                  <button
-                    className="button button--ghost"
-                    onClick={() =>
-                      void pickSavePathInto(setExcelOutputPath, 'merged-data.xlsx', [
-                        { name: 'Excel', extensions: ['xlsx'] }
-                      ])
-                    }
-                    disabled={Boolean(busy)}
-                  >
-                    Pick output
-                  </button>
-                </div>
-                <input
-                  value={excelOutputPath}
-                  onChange={(event) => setExcelOutputPath(event.target.value)}
-                  placeholder="Output XLSX path"
-                />
-                <button
-                  className="button"
-                  onClick={() => void mergeExcel()}
-                  disabled={Boolean(busy)}
-                >
-                  Build workbook
-                </button>
-                <pre className="result-box result-box--compact">{excelResult || 'Excel merge result.'}</pre>
-              </div>
-
-              <div className="subsection">
-                <h4>Word summary</h4>
-                <input
-                  value={wordTitle}
-                  onChange={(event) => setWordTitle(event.target.value)}
-                  placeholder="Document title"
-                />
-                <textarea
-                  value={wordParagraphsText}
-                  onChange={(event) => setWordParagraphsText(event.target.value)}
-                  rows={4}
-                  placeholder="One paragraph per line"
-                />
-                <div className="button-row">
-                  <button
-                    className="button button--ghost"
-                    onClick={() =>
-                      void pickSavePathInto(setWordOutputPath, 'summary.docx', [
-                        { name: 'Word', extensions: ['docx'] }
-                      ])
-                    }
-                    disabled={Boolean(busy)}
-                  >
-                    Pick output
-                  </button>
-                </div>
-                <input
-                  value={wordOutputPath}
-                  onChange={(event) => setWordOutputPath(event.target.value)}
-                  placeholder="Output DOCX path"
-                />
-                <button
-                  className="button"
-                  onClick={() => void generateWord()}
-                  disabled={Boolean(busy)}
-                >
-                  Generate docx
-                </button>
-                <pre className="result-box result-box--compact">{wordResult || 'Word generation result.'}</pre>
-              </div>
-
-              <div className="subsection">
-                <h4>PPT summary</h4>
-                <input
-                  value={pptTitle}
-                  onChange={(event) => setPptTitle(event.target.value)}
-                  placeholder="Presentation title"
-                />
-                <textarea
-                  value={pptBulletsText}
-                  onChange={(event) => setPptBulletsText(event.target.value)}
-                  rows={4}
-                  placeholder="One bullet per line"
-                />
-                <div className="button-row">
-                  <button
-                    className="button button--ghost"
-                    onClick={() =>
-                      void pickSavePathInto(setPptOutputPath, 'summary.pptx', [
-                        { name: 'PowerPoint', extensions: ['pptx'] }
-                      ])
-                    }
-                    disabled={Boolean(busy)}
-                  >
-                    Pick output
-                  </button>
-                </div>
-                <input
-                  value={pptOutputPath}
-                  onChange={(event) => setPptOutputPath(event.target.value)}
-                  placeholder="Output PPTX path"
-                />
-                <button
-                  className="button"
-                  onClick={() => void generatePpt()}
-                  disabled={Boolean(busy)}
-                >
-                  Generate pptx
-                </button>
-                <pre className="result-box result-box--compact">{pptResult || 'PPT generation result.'}</pre>
-              </div>
-            </div>
-          </div>
-        </Panel>
-
-        <Panel
-          eyebrow="Reports"
-          title="Git Weekly / Monthly Report"
-          subtitle="Scan a workspace for repositories or target one repository directly, then generate a markdown work report."
-        >
-          <div className="subgrid two-up">
-            <label className="field">
-              <span>Source mode</span>
-              <select
-                value={gitSourceMode}
-                onChange={(event) => setGitSourceMode(event.target.value as typeof gitSourceMode)}
-              >
-                <option value="workspace">Workspace</option>
-                <option value="repository">Repository</option>
-              </select>
-            </label>
-            <label className="field">
-              <span>Depth</span>
-              <input
-                value={gitDepth}
-                onChange={(event) => setGitDepth(event.target.value)}
-                placeholder="3"
+          <main className="min-h-0 flex-1 overflow-hidden px-6 pb-6 pt-5">
+            {mainSection === 'conversation' && conversationTab === 'dialogue' ? (
+              <ConversationHomePage
+                busy={taskRunner.busy}
+                activity={taskRunner.activity}
+                openClawConfig={openClawBridge.openClawConfig}
+                selectedConversation={conversationCenter.selectedConversation}
+                draft={conversationCenter.draft}
+                launchCards={HOME_LAUNCH_CARDS}
+                onDraftChange={conversationCenter.setDraft}
+                onSendMessage={conversationCenter.sendMessage}
+                onApplyPrompt={conversationCenter.applyPrompt}
+                onActivateLaunchCard={handleLaunchCardAction}
+                onOpenStudio={() => setConversationTab('studio')}
+                onOpenBridge={() => openStudioSection('bridge')}
               />
-            </label>
-          </div>
+            ) : null}
 
-          <label className="field">
-            <span>Source path</span>
-            <div className="inline-field">
-              <input
-                value={gitSourcePath}
-                onChange={(event) => setGitSourcePath(event.target.value)}
-                placeholder="/root/projects"
-              />
-              <button
-                className="button button--ghost"
-                onClick={() => void pickDirectoryInto(setGitSourcePath)}
-                disabled={Boolean(busy)}
+            {mainSection === 'conversation' && conversationTab === 'studio' ? (
+              <StudioPage
+                activeSection={studioSection}
+                environment={environment}
+                busy={taskRunner.busy}
+                activity={taskRunner.activity}
+                clientSkillCount={clientRuntime.skills.length}
+                clientAgentCount={clientRuntime.agents.length}
+                taskRunCount={clientRuntime.taskRuns.length}
+                openClawAgentCount={openClawBridge.openClawAgents.length}
+                openClawMode={openClawBridge.openClawConfig.mode}
+                onSelectSection={setStudioSection}
+                onRefreshRuntime={clientRuntime.refreshRuntime}
+                onLoadAgents={openClawBridge.loadAgents}
+                onCheckOpenClaw={openClawBridge.checkHealth}
               >
-                Browse
-              </button>
-            </div>
-          </label>
+                {renderStudioContent()}
+              </StudioPage>
+            ) : null}
 
-          <div className="subgrid three-up">
-            <label className="field">
-              <span>Preset</span>
-              <select
-                value={gitPreset}
-                onChange={(event) => setGitPreset(event.target.value as typeof gitPreset)}
-              >
-                <option value="week">Current week</option>
-                <option value="month">Current month</option>
-                <option value="custom">Custom range</option>
-              </select>
-            </label>
-            <label className="field">
-              <span>Start date</span>
-              <input
-                type="date"
-                value={gitStartDate}
-                onChange={(event) => setGitStartDate(event.target.value)}
-                disabled={gitPreset !== 'custom'}
+            {mainSection === 'inspiration' ? (
+              <InspirationSquarePage
+                selectedCategory={selectedInspirationCategory}
+                onSelectCategory={setSelectedInspirationCategory}
+                onOpenItem={setSelectedInspirationId}
+                onUsePrompt={handleUsePrompt}
               />
-            </label>
-            <label className="field">
-              <span>End date</span>
-              <input
-                type="date"
-                value={gitEndDate}
-                onChange={(event) => setGitEndDate(event.target.value)}
-                disabled={gitPreset !== 'custom'}
+            ) : null}
+
+            {mainSection === 'schedule' ? (
+              <ScheduleCenterPage
+                busy={taskRunner.busy}
+                draft={scheduleDraft}
+                onDraftChange={setScheduleDraft}
+                onSubmit={handleScheduleSubmit}
+                onApplySuggestion={handleUsePrompt}
               />
-            </label>
-          </div>
+            ) : null}
+          </main>
+        </div>
+      </div>
 
-          <label className="field">
-            <span>Author filter</span>
-            <input
-              value={gitAuthor}
-              onChange={(event) => setGitAuthor(event.target.value)}
-              placeholder="Optional regex or email"
-            />
-          </label>
+      <InspirationDetailModal item={selectedInspirationItem} onClose={() => setSelectedInspirationId(null)} onUsePrompt={handleUsePrompt} />
 
-          <label className="field">
-            <span>Report output path</span>
-            <div className="inline-field">
-              <input
-                value={gitReportPath}
-                onChange={(event) => setGitReportPath(event.target.value)}
-                placeholder="Optional markdown path"
-              />
-              <button
-                className="button button--ghost"
-                onClick={() =>
-                  void pickSavePathInto(setGitReportPath, 'work-report.md', [
-                    { name: 'Markdown', extensions: ['md'] }
-                  ])
-                }
-                disabled={Boolean(busy)}
-              >
-                Pick output
-              </button>
-            </div>
-          </label>
-
-          <div className="button-row">
-            <button
-              className="button button--ghost"
-              onClick={() => void findGitRepositories()}
-              disabled={Boolean(busy)}
-            >
-              Find repos
-            </button>
-            <button
-              className="button"
-              onClick={() => void generateGitReport()}
-              disabled={Boolean(busy)}
-            >
-              Generate report
-            </button>
-            <button
-              className="button button--ghost"
-              onClick={() => void saveGitReport()}
-              disabled={Boolean(busy) || !gitReport || !gitReportPath}
-            >
-              Save markdown
-            </button>
-          </div>
-
-          <div className="subsection">
-            <h4>OpenClaw 中文报告</h4>
-            <div className="subgrid three-up">
-              <label className="field">
-                <span>Template</span>
-                <select
-                  value={gitAiTemplate}
-                  onChange={(event) => setGitAiTemplate(event.target.value as AiReportTemplate)}
-                >
-                  <option value="auto_cn">Auto by preset</option>
-                  <option value="weekly_cn">中文周报</option>
-                  <option value="monthly_cn">中文月报</option>
-                  <option value="leadership_cn">中文领导摘要</option>
-                </select>
-              </label>
-              <label className="field">
-                <span>OpenClaw agent</span>
-                <input
-                  list="openclaw-agents"
-                  value={openClawAgentId}
-                  onChange={(event) => setOpenClawAgentId(event.target.value)}
-                  placeholder={openClawConfig.defaultAgentId ?? 'main'}
-                />
-              </label>
-              <label className="field">
-                <span>AI output path</span>
-                <div className="inline-field">
-                  <input
-                    value={gitAiOutputPath}
-                    onChange={(event) => setGitAiOutputPath(event.target.value)}
-                    placeholder="Optional markdown path"
-                  />
-                  <button
-                    className="button button--ghost"
-                    onClick={() =>
-                      void pickSavePathInto(setGitAiOutputPath, 'openclaw-report.md', [
-                        { name: 'Markdown', extensions: ['md'] }
-                      ])
-                    }
-                    disabled={Boolean(busy)}
-                  >
-                    Pick
-                  </button>
-                </div>
-              </label>
-            </div>
-
-            <label className="field">
-              <span>Business context</span>
-              <textarea
-                value={gitAiContext}
-                onChange={(event) => setGitAiContext(event.target.value)}
-                rows={4}
-                placeholder="Optional context, project goals, audience, or reporting constraints."
-              />
-            </label>
-
-            <div className="button-row">
-              <button
-                className="button"
-                onClick={() => void generateOpenClawGitReport()}
-                disabled={Boolean(busy)}
-              >
-                Generate with OpenClaw
-              </button>
-              <button
-                className="button button--ghost"
-                onClick={() => void saveOpenClawGitReport()}
-                disabled={Boolean(busy) || !gitAiMarkdown || !gitAiOutputPath}
-              >
-                Save AI report
-              </button>
-            </div>
-            <p className="muted">
-              Current template: {gitReport ? getAiTemplateLabel(gitAiTemplate, gitReport) : 'Will resolve after base report generation'}.
-            </p>
-          </div>
-
-          <div className="list-box">
-            {gitRepositories.length === 0 ? (
-              <span className="muted">No repositories scanned yet.</span>
-            ) : (
-              gitRepositories.map((repository) => (
-                <div key={repository.rootPath}>
-                  <strong>{repository.name}</strong> <span className="muted">{repository.branch}</span>
-                </div>
-              ))
-            )}
-          </div>
-
-          <pre className="result-box">{gitReport?.markdown ?? 'Generated markdown report will appear here.'}</pre>
-          <pre className="result-box">{gitAiMarkdown || 'OpenClaw-generated Chinese report will appear here.'}</pre>
-        </Panel>
-      </main>
-
-      <footer className="footer">
-        <span>Dclaw is ready for OpenClaw-specific adapters, local automation plugins, and report templates.</span>
-      </footer>
+      {settingsOpen ? (
+        <SettingsModal
+          activeSection={settingsSection}
+          environment={environment}
+          openClawConfig={openClawBridge.openClawConfig}
+          clientSkillCount={clientRuntime.skills.length}
+          clientAgentCount={clientRuntime.agents.length}
+          taskTemplateCount={clientRuntime.taskTemplates.length}
+          taskRunCount={clientRuntime.taskRuns.length}
+          onSelectSection={setSettingsSection}
+          onClose={() => setSettingsOpen(false)}
+        />
+      ) : null}
     </div>
   );
 }

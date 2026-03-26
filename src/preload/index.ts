@@ -9,6 +9,7 @@ import type {
   OpenClawConfig,
   OpenClawTaskRequest,
   PptSummaryRequest,
+  DclawTaskTemplateExecutionRequest,
   TextMergeRequest,
   WordSummaryRequest
 } from '../shared/types';
@@ -20,6 +21,16 @@ const api: DclawApi = {
     pickDirectory: () => ipcRenderer.invoke('app:pickDirectory'),
     pickSavePath: (defaultPath?: string, filters?: FileDialogFilter[]) =>
       ipcRenderer.invoke('app:pickSavePath', defaultPath, filters)
+  },
+  client: {
+    getRuntimeSnapshot: () => ipcRenderer.invoke('client:getRuntimeSnapshot'),
+    listSkills: () => ipcRenderer.invoke('client:listSkills'),
+    listAgents: () => ipcRenderer.invoke('client:listAgents'),
+    listWorkflows: () => ipcRenderer.invoke('client:listWorkflows'),
+    listTaskTemplates: () => ipcRenderer.invoke('client:listTaskTemplates'),
+    listInstallations: () => ipcRenderer.invoke('client:listInstallations'),
+    listTaskRuns: (limit?: number) => ipcRenderer.invoke('client:listTaskRuns', limit),
+    runTaskTemplate: (request: DclawTaskTemplateExecutionRequest) => ipcRenderer.invoke('client:runTaskTemplate', request)
   },
   files: {
     listDirectory: (path) => ipcRenderer.invoke('files:listDirectory', path),

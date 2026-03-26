@@ -1,3 +1,15 @@
+import type {
+  DclawAgentDefinition,
+  DclawClientRuntimeSnapshot,
+  DclawInstallation,
+  DclawSkillDefinition,
+  DclawTaskExecutionResult,
+  DclawTaskRun,
+  DclawTaskTemplateExecutionRequest,
+  DclawTaskTemplate,
+  DclawWorkflowDefinition
+} from './client';
+
 export type OpenClawMode = 'cli' | 'http' | 'command';
 export type ReportPreset = 'week' | 'month' | 'custom';
 export type OpenClawThinkingLevel = 'off' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh';
@@ -9,6 +21,7 @@ export interface EnvironmentInfo {
   cwd: string;
   home: string;
   optionalOfficePackages: string[];
+  clientRuntime?: DclawClientRuntimeSnapshot;
 }
 
 export interface FileDialogFilter {
@@ -207,6 +220,16 @@ export interface DclawApi {
     pickDirectory(): Promise<string | null>;
     pickSavePath(defaultPath?: string, filters?: FileDialogFilter[]): Promise<string | null>;
   };
+  client: {
+    getRuntimeSnapshot(): Promise<DclawClientRuntimeSnapshot>;
+    listSkills(): Promise<DclawSkillDefinition[]>;
+    listAgents(): Promise<DclawAgentDefinition[]>;
+    listWorkflows(): Promise<DclawWorkflowDefinition[]>;
+    listTaskTemplates(): Promise<DclawTaskTemplate[]>;
+    listInstallations(): Promise<DclawInstallation[]>;
+    listTaskRuns(limit?: number): Promise<DclawTaskRun[]>;
+    runTaskTemplate(request: DclawTaskTemplateExecutionRequest): Promise<DclawTaskExecutionResult>;
+  };
   files: {
     listDirectory(path: string): Promise<FileEntry[]>;
     readText(path: string): Promise<string>;
@@ -235,3 +258,31 @@ export interface DclawApi {
     execute(request: OpenClawTaskRequest): Promise<OpenClawTaskResponse>;
   };
 }
+
+export type {
+  DclawAgentDefinition,
+  DclawClientRuntimeSnapshot,
+  DclawInstallation,
+  DclawJsonSchema,
+  DclawPackageEntry,
+  DclawPackageManifest,
+  DclawPackagePublisher,
+  DclawPackageType,
+  DclawPackageVisibility,
+  DclawPermissionKey,
+  DclawPermissionSet,
+  DclawRegistrySummary,
+  DclawRunStatus,
+  DclawSchedule,
+  DclawSkillDefinition,
+  DclawTaskArtifact,
+  DclawTaskCategory,
+  DclawTaskExecutionResult,
+  DclawTaskRun,
+  DclawTaskSourceType,
+  DclawTaskTemplateExecutionRequest,
+  DclawTaskTemplate,
+  DclawWorkflowDefinition,
+  DclawWorkflowStep,
+  DclawWorkflowStepKind
+} from './client';
