@@ -445,8 +445,8 @@ export function App() {
           <header className="relative overflow-hidden border-b border-[#eddcc8] bg-white/28 px-6 py-5 backdrop-blur-md">
             <div className="pointer-events-none absolute inset-x-0 top-0 h-24 bg-[linear-gradient(180deg,rgba(255,255,255,0.34),transparent)]" />
 
-            <div className="relative flex flex-wrap items-start justify-between gap-4">
-              <div className="min-w-0 flex-1">
+            <div className="relative flex flex-col gap-5">
+              <div className="flex flex-wrap items-start justify-between gap-4">
                 <div className="flex flex-wrap items-center gap-2">
                   <span className="inline-flex items-center gap-2 rounded-full border border-[#ead7c5] bg-white/82 px-3 py-2 text-xs font-semibold uppercase tracking-[0.14em] text-[#8a684c] shadow-[0_8px_18px_rgba(147,104,65,0.06)]">
                     <BrandMark size="sm" className="h-8 w-8 rounded-[14px] shadow-none" iconClassName="h-3.5 w-3.5" />
@@ -457,92 +457,92 @@ export function App() {
                   </span>
                 </div>
 
-                <div className="mt-4 flex flex-wrap items-end justify-between gap-4">
-                  <div className="min-w-0 max-w-[54rem]">
-                    <div className="text-[2rem] font-semibold tracking-[-0.04em] text-[#241914]">{getHeaderTitle()}</div>
-                    <p className="mt-2 text-sm leading-7 text-[#766352]">{getHeaderDescription()}</p>
+                <div className="grid w-full gap-3 lg:w-auto lg:grid-cols-[minmax(250px,280px)_minmax(300px,360px)_auto]">
+                  <div className="flex min-w-0 items-center gap-3 rounded-[24px] border border-[#ead7c5] bg-white/86 px-4 py-3 shadow-[0_10px_20px_rgba(147,104,65,0.06)]">
+                    <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-[16px] bg-[#fff1e2] text-[#b36d33]">
+                      <span className="i-lucide-folder-tree h-4 w-4" />
+                    </span>
+                    <div className="min-w-0">
+                      <div className="text-[11px] font-semibold uppercase tracking-[0.12em] text-[#a08267]">{t('shell.app.workspaceLabel')}</div>
+                      <div className="truncate text-sm font-semibold text-[#241914]">{workspaceLabel}</div>
+                    </div>
                   </div>
 
-                  {mainSection === 'conversation' ? (
-                    <div className="inline-flex rounded-full border border-[#ead7c5] bg-white/86 p-1 shadow-[0_8px_18px_rgba(147,104,65,0.08)]">
+                  <div className="flex min-w-0 items-center gap-3 rounded-[24px] border border-[#ead7c5] bg-white/86 px-4 py-3 shadow-[0_10px_20px_rgba(147,104,65,0.06)]">
+                    <span className={['h-2.5 w-2.5 shrink-0 rounded-full', taskRunner.busy ? 'bg-[#f3b25d]' : 'bg-[#79c685]'].join(' ')} />
+                    <div className="min-w-0">
+                      <div className="text-[11px] font-semibold uppercase tracking-[0.12em] text-[#a08267]">{t('shell.studio.metric.runs')}</div>
+                      <div className="truncate text-sm font-semibold text-[#241914]" title={taskRunner.busy ? t('shell.app.status.runningShort', { label: taskRunner.busy }) : taskRunner.activity}>
+                        {taskRunner.busy ? t('shell.app.status.runningShort', { label: taskRunner.busy }) : taskRunner.activity}
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center justify-between gap-3 rounded-[24px] border border-[#ead7c5] bg-white/84 px-2 py-2 shadow-[0_8px_18px_rgba(147,104,65,0.06)]">
+                    <div className="inline-flex rounded-full bg-[#f8efe7] p-1">
                       <button
                         type="button"
-                        onClick={() => setConversationTab('dialogue')}
+                        onClick={() => setLocale('zh-CN')}
                         className={[
-                          'rounded-full px-5 py-2 text-sm font-semibold transition',
-                          conversationTab === 'dialogue' ? 'bg-[#241b17] text-[#fff5ec]' : 'text-[#7a6454] hover:bg-[#fff7ef]'
+                          'rounded-full px-4 py-2 text-sm font-semibold transition',
+                          locale === 'zh-CN' ? 'bg-[#241b17] text-[#fff5ec]' : 'text-[#7a6454] hover:bg-white'
                         ].join(' ')}
                       >
-                        {t('shell.app.tab.dialogue')}
+                        {t('shell.locale.zh')}
                       </button>
                       <button
                         type="button"
-                        onClick={() => setConversationTab('studio')}
+                        onClick={() => setLocale('en-US')}
                         className={[
-                          'rounded-full px-5 py-2 text-sm font-semibold transition',
-                          conversationTab === 'studio' ? 'bg-[#241b17] text-[#fff5ec]' : 'text-[#7a6454] hover:bg-[#fff7ef]'
+                          'rounded-full px-4 py-2 text-sm font-semibold transition',
+                          locale === 'en-US' ? 'bg-[#241b17] text-[#fff5ec]' : 'text-[#7a6454] hover:bg-white'
                         ].join(' ')}
                       >
-                        {t('shell.app.tab.studio')}
+                        {t('shell.locale.en')}
                       </button>
                     </div>
-                  ) : null}
+
+                    <button
+                      type="button"
+                      onClick={() => openSettings('general')}
+                      className="flex h-11 w-11 items-center justify-center rounded-[18px] border border-[#ead7c5] bg-white/88 text-[#775d4c] transition hover:bg-[#fff7ef]"
+                    >
+                      <span className="i-lucide-settings-2 h-4 w-4" />
+                    </button>
+                  </div>
                 </div>
               </div>
 
-              <div className="flex flex-wrap items-center justify-end gap-3">
-                <div className="flex min-w-[250px] items-center gap-3 rounded-[24px] border border-[#ead7c5] bg-white/86 px-4 py-3 shadow-[0_10px_20px_rgba(147,104,65,0.06)]">
-                  <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-[16px] bg-[#fff1e2] text-[#b36d33]">
-                    <span className="i-lucide-folder-tree h-4 w-4" />
-                  </span>
-                  <div className="min-w-0">
-                    <div className="text-[11px] font-semibold uppercase tracking-[0.12em] text-[#a08267]">{t('shell.app.workspaceLabel')}</div>
-                    <div className="truncate text-sm font-semibold text-[#241914]">{workspaceLabel}</div>
-                  </div>
+              <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_auto] xl:items-end">
+                <div className="min-w-0 max-w-[58rem]">
+                  <div className="text-[2rem] font-semibold tracking-[-0.04em] text-[#241914]">{getHeaderTitle()}</div>
+                  <p className="mt-2 max-w-[52rem] text-sm leading-7 text-[#766352]">{getHeaderDescription()}</p>
                 </div>
 
-                <div className="flex min-w-[240px] items-center gap-3 rounded-[24px] border border-[#ead7c5] bg-white/86 px-4 py-3 shadow-[0_10px_20px_rgba(147,104,65,0.06)]">
-                  <span className={['h-2.5 w-2.5 rounded-full', taskRunner.busy ? 'bg-[#f3b25d]' : 'bg-[#79c685]'].join(' ')} />
-                  <div className="min-w-0">
-                    <div className="text-[11px] font-semibold uppercase tracking-[0.12em] text-[#a08267]">{t('shell.studio.metric.runs')}</div>
-                    <div className="truncate text-sm font-semibold text-[#241914]">
-                      {taskRunner.busy ? t('shell.app.status.runningShort', { label: taskRunner.busy }) : taskRunner.activity}
-                    </div>
-                  </div>
-                </div>
-
-                <div className="flex items-center gap-3 rounded-[24px] border border-[#ead7c5] bg-white/84 px-2 py-2 shadow-[0_8px_18px_rgba(147,104,65,0.06)]">
-                  <div className="inline-flex rounded-full bg-[#f8efe7] p-1">
+                {mainSection === 'conversation' ? (
+                  <div className="inline-flex shrink-0 self-start rounded-full border border-[#ead7c5] bg-white/86 p-1 shadow-[0_8px_18px_rgba(147,104,65,0.08)]">
                     <button
                       type="button"
-                      onClick={() => setLocale('zh-CN')}
+                      onClick={() => setConversationTab('dialogue')}
                       className={[
-                        'rounded-full px-4 py-2 text-sm font-semibold transition',
-                        locale === 'zh-CN' ? 'bg-[#241b17] text-[#fff5ec]' : 'text-[#7a6454] hover:bg-white'
+                        'whitespace-nowrap rounded-full px-5 py-2 text-sm font-semibold transition',
+                        conversationTab === 'dialogue' ? 'bg-[#241b17] text-[#fff5ec]' : 'text-[#7a6454] hover:bg-[#fff7ef]'
                       ].join(' ')}
                     >
-                      {t('shell.locale.zh')}
+                      {t('shell.app.tab.dialogue')}
                     </button>
                     <button
                       type="button"
-                      onClick={() => setLocale('en-US')}
+                      onClick={() => setConversationTab('studio')}
                       className={[
-                        'rounded-full px-4 py-2 text-sm font-semibold transition',
-                        locale === 'en-US' ? 'bg-[#241b17] text-[#fff5ec]' : 'text-[#7a6454] hover:bg-white'
+                        'whitespace-nowrap rounded-full px-5 py-2 text-sm font-semibold transition',
+                        conversationTab === 'studio' ? 'bg-[#241b17] text-[#fff5ec]' : 'text-[#7a6454] hover:bg-[#fff7ef]'
                       ].join(' ')}
                     >
-                      {t('shell.locale.en')}
+                      {t('shell.app.tab.studio')}
                     </button>
                   </div>
-
-                  <button
-                    type="button"
-                    onClick={() => openSettings('general')}
-                    className="flex h-11 w-11 items-center justify-center rounded-[18px] border border-[#ead7c5] bg-white/88 text-[#775d4c] transition hover:bg-[#fff7ef]"
-                  >
-                    <span className="i-lucide-settings-2 h-4 w-4" />
-                  </button>
-                </div>
+                ) : null}
               </div>
             </div>
           </header>
